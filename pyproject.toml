@@ -17,7 +17,9 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "a2a-sdk>=0.3.26",
     "pydantic>=2.7",
+    "uvicorn>=0.44.0",
 ]
 
 [project.optional-dependencies]

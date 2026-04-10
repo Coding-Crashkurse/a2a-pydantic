@@ -1,9 +1,16 @@
 """a2a-pydantic: Pydantic models for the A2A protocol.
 
-Dual v0.3 / v1.0 support, zero protobuf dependency. The optional ``[proto]``
-extra installs the official ``a2a-sdk`` so :func:`a2a_pydantic.proto.to_proto`
-can convert these models into proto messages for use with the official Python
-SDK's ``AgentExecutor``.
+Dual v0.3 / v1.0 support, zero protobuf dependency. Two layers:
+
+- :mod:`a2a_pydantic.models` — the data primitives (Message, Task, AgentCard,
+  …) with full dual-version dump/validate support.
+- :mod:`a2a_pydantic.jsonrpc` — the v0.3 JSON-RPC envelope types
+  (SendMessageRequest, A2ARequest, JSONRPCErrorResponse, …) for building
+  a typed FastAPI endpoint that dispatches by ``method``.
+
+The optional ``[proto]`` extra installs ``protobuf`` so
+:func:`a2a_pydantic.proto.to_proto` can convert any supported model into a
+proto message — useful for handing them to an ``a2a-sdk`` ``AgentExecutor``.
 
 Quick start::
 
@@ -35,6 +42,61 @@ from a2a_pydantic.enums import (
     Role,
     TaskState,
     TransportProtocol,
+)
+from a2a_pydantic.jsonrpc import (
+    A2ARequest,
+    A2ASpecificError,
+    AuthenticatedExtendedCardNotConfiguredError,
+    CancelTaskRequest,
+    CancelTaskResponse,
+    CancelTaskSuccessResponse,
+    ContentTypeNotSupportedError,
+    DeleteTaskPushNotificationConfigParams,
+    DeleteTaskPushNotificationConfigRequest,
+    DeleteTaskPushNotificationConfigResponse,
+    DeleteTaskPushNotificationConfigSuccessResponse,
+    GetAuthenticatedExtendedCardRequest,
+    GetAuthenticatedExtendedCardResponse,
+    GetAuthenticatedExtendedCardSuccessResponse,
+    GetTaskPushNotificationConfigParams,
+    GetTaskPushNotificationConfigRequest,
+    GetTaskPushNotificationConfigResponse,
+    GetTaskPushNotificationConfigSuccessResponse,
+    GetTaskRequest,
+    GetTaskResponse,
+    GetTaskSuccessResponse,
+    InternalError,
+    InvalidAgentResponseError,
+    InvalidParamsError,
+    InvalidRequestError,
+    JSONParseError,
+    JSONRPCError,
+    JSONRPCErrorResponse,
+    JSONRPCMessage,
+    JSONRPCRequest,
+    JSONRPCResponse,
+    JSONRPCSuccessResponse,
+    ListTaskPushNotificationConfigParams,
+    ListTaskPushNotificationConfigRequest,
+    ListTaskPushNotificationConfigResponse,
+    ListTaskPushNotificationConfigSuccessResponse,
+    MethodNotFoundError,
+    PushNotificationNotSupportedError,
+    SendMessageRequest,
+    SendMessageResponse,
+    SendMessageSuccessResponse,
+    SendStreamingMessageRequest,
+    SendStreamingMessageResponse,
+    SendStreamingMessageSuccessResponse,
+    SetTaskPushNotificationConfigRequest,
+    SetTaskPushNotificationConfigResponse,
+    SetTaskPushNotificationConfigSuccessResponse,
+    TaskIdParams,
+    TaskNotCancelableError,
+    TaskNotFoundError,
+    TaskQueryParams,
+    TaskResubscriptionRequest,
+    UnsupportedOperationError,
 )
 from a2a_pydantic.models import (
     A2AError,
@@ -126,7 +188,65 @@ __all__ = [
     "ClientCredentialsOAuthFlow",
     "ImplicitOAuthFlow",
     "PasswordOAuthFlow",
-    # errors
+    # errors (data layer)
     "ErrorInfo",
     "A2AError",
+    # JSON-RPC envelope (v0.3 transport)
+    "JSONRPCMessage",
+    "JSONRPCRequest",
+    "JSONRPCError",
+    "JSONRPCSuccessResponse",
+    "JSONRPCErrorResponse",
+    "JSONRPCResponse",
+    # JSON-RPC specific errors
+    "JSONParseError",
+    "InvalidRequestError",
+    "MethodNotFoundError",
+    "InvalidParamsError",
+    "InternalError",
+    "TaskNotFoundError",
+    "TaskNotCancelableError",
+    "PushNotificationNotSupportedError",
+    "UnsupportedOperationError",
+    "ContentTypeNotSupportedError",
+    "InvalidAgentResponseError",
+    "AuthenticatedExtendedCardNotConfiguredError",
+    "A2ASpecificError",
+    # JSON-RPC param types
+    "TaskIdParams",
+    "TaskQueryParams",
+    "GetTaskPushNotificationConfigParams",
+    "ListTaskPushNotificationConfigParams",
+    "DeleteTaskPushNotificationConfigParams",
+    # JSON-RPC request wrappers + union
+    "SendMessageRequest",
+    "SendStreamingMessageRequest",
+    "GetTaskRequest",
+    "CancelTaskRequest",
+    "SetTaskPushNotificationConfigRequest",
+    "GetTaskPushNotificationConfigRequest",
+    "DeleteTaskPushNotificationConfigRequest",
+    "ListTaskPushNotificationConfigRequest",
+    "TaskResubscriptionRequest",
+    "GetAuthenticatedExtendedCardRequest",
+    "A2ARequest",
+    # JSON-RPC response wrappers + unions
+    "SendMessageSuccessResponse",
+    "SendStreamingMessageSuccessResponse",
+    "GetTaskSuccessResponse",
+    "CancelTaskSuccessResponse",
+    "SetTaskPushNotificationConfigSuccessResponse",
+    "GetTaskPushNotificationConfigSuccessResponse",
+    "DeleteTaskPushNotificationConfigSuccessResponse",
+    "ListTaskPushNotificationConfigSuccessResponse",
+    "GetAuthenticatedExtendedCardSuccessResponse",
+    "SendMessageResponse",
+    "SendStreamingMessageResponse",
+    "GetTaskResponse",
+    "CancelTaskResponse",
+    "SetTaskPushNotificationConfigResponse",
+    "GetTaskPushNotificationConfigResponse",
+    "DeleteTaskPushNotificationConfigResponse",
+    "ListTaskPushNotificationConfigResponse",
+    "GetAuthenticatedExtendedCardResponse",
 ]
