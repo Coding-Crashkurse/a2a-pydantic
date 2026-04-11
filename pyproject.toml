@@ -2,7 +2,7 @@
 name = "a2a-pydantic"
 version = "0.1.0"
 description = "Pydantic models for A2A protocol (v0.3 + v1.0)"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 dependencies = ["pydantic>=2.0"]
 
 [project.optional-dependencies]

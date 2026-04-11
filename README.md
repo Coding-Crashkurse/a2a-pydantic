@@ -41,7 +41,7 @@ The PyPI distribution name uses a hyphen (`a2a-pydantic`), the Python
 import name uses an underscore (`a2a_pydantic`). Standard Python
 convention — same as e.g. `pydantic-settings` → `pydantic_settings`.
 
-Requires Python 3.13+ and Pydantic 2. The core package has **zero
+Requires Python 3.11+ and Pydantic 2. The core package has **zero
 runtime dependencies beyond Pydantic**.
 
 Two optional extras are available:
