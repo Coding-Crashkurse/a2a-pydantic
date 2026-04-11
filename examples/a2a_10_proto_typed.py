@@ -200,7 +200,7 @@ def build_typed_agent_card(host: str, port: int) -> v10.AgentCard:
     )
 
 
-async def serve(host: str = "127.0.0.1", port: int = 41241) -> None:
+async def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
     """Run the typed Sample Agent on HTTP+JSON REST only."""
     typed_card = build_typed_agent_card(host, port)
     pb_card = convert_to_proto(typed_card)

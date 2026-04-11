@@ -139,7 +139,7 @@ class SampleAgentExecutor(AgentExecutor):
         return f"Hello World! You said: '{query}'. Thanks for your message!"
 
 
-async def serve(host: str = '127.0.0.1', port: int = 41241) -> None:
+async def serve(host: str = '127.0.0.1', port: int = 8000) -> None:
     """Run the Sample Agent server on HTTP+JSON REST only."""
     agent_card = AgentCard(
         name='Sample Agent',

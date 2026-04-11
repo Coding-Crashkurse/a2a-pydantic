@@ -348,7 +348,7 @@ python examples/a2a_10_proto.py          # SDK-native
 python examples/a2a_10_proto_typed.py    # typed
 ```
 
-Either version exposes the agent at `http://127.0.0.1:41241` with the
+Either version exposes the agent at `http://127.0.0.1:8000` with the
 card at `/.well-known/agent-card.json` and the REST routes under
 `/a2a/rest/v1/`.
 
