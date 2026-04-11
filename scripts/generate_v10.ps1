@@ -20,7 +20,7 @@ Write-Host "Resolving external `$ref pointers ..."
 python scripts\resolve_refs.py $SchemaRaw $SchemaResolved
 
 # Generate models
-$OutputFile = "src\a2apydantic\v10\models.py"
+$OutputFile = "src\a2a_pydantic\v10\models.py"
 $OutputDir = Split-Path $OutputFile -Parent
 if (-not (Test-Path $OutputDir)) {
     New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
@@ -37,7 +37,7 @@ python -m datamodel_code_generator `
     --snake-case-field `
     --no-alias `
     --set-default-enum-member `
-    --base-class a2apydantic.base.A2ABaseModel `
+    --base-class a2a_pydantic.base.A2ABaseModel `
     --target-python-version 3.10 `
     --formatters black --formatters isort
 

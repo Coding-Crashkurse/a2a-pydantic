@@ -1,4 +1,4 @@
-# a2apydantic
+# a2a-pydantic
 
 Pydantic models for the [A2A protocol](https://a2a-protocol.org/), covering
 both **v0.3** and **v1.0** in a single package — plus a downward converter
@@ -27,15 +27,19 @@ The package has **zero runtime dependencies beyond Pydantic**. No
 ## Install
 
 ```bash
-pip install a2apydantic
+pip install a2a-pydantic
 ```
+
+The PyPI distribution name uses a hyphen (`a2a-pydantic`), the Python
+import name uses an underscore (`a2a_pydantic`). Standard Python
+convention — same as e.g. `pydantic-settings` → `pydantic_settings`.
 
 Requires Python 3.13+ and Pydantic 2.
 
 ## Basic usage — v1.0 models
 
 ```python
-from a2apydantic import v10
+from a2a_pydantic import v10
 
 req = v10.SendMessageRequest(
     message=v10.Message(
@@ -49,14 +53,14 @@ req = v10.SendMessageRequest(
 print(req.model_dump_json(by_alias=True, exclude_none=True))
 ```
 
-All model classes live under `a2apydantic.v10` and are generated from the
+All model classes live under `a2a_pydantic.v10` and are generated from the
 official A2A JSON Schema. Field names are snake_case in Python, camelCase
 on the wire (via `A2ABaseModel`'s alias generator).
 
 ## Basic usage — v0.3 models
 
 ```python
-from a2apydantic import v03
+from a2a_pydantic import v03
 
 params = v03.MessageSendParams(
     message=v03.Message(
@@ -80,7 +84,7 @@ v0.3 model — fully type-checked via `@overload`, so your editor knows
 
 ```python
 import warnings
-from a2apydantic import convert_to_v03, v10
+from a2a_pydantic import convert_to_v03, v10
 
 req = v10.SendMessageRequest(
     message=v10.Message(
@@ -156,18 +160,20 @@ One endpoint, both wire formats. Client picks via `A2A-Version` header, and
 any conversion losses come back in the response so clients can act on them:
 
 The full example in [examples/fastapi_version_header.py](examples/fastapi_version_header.py)
-wraps the whole negotiation + conversion in a FastAPI dependency, so the
-route itself is a one-liner. The relevant parts:
+is ~80 lines. Core of the route:
 
 ```python
-from a2apydantic import convert_to_v03, v03, v10
+from a2a_pydantic import convert_to_v03, v10
 
-def negotiate_send_message(
+@app.post("/message:send")
+def message_send(
     request: v10.SendMessageRequest,
     a2a_version: Annotated[str | None, Header(alias="A2A-Version")] = None,
-) -> NegotiatedSendMessage:
-    if (a2a_version or "1.0") == "1.0":
-        return NegotiatedSendMessage(version="1.0", payload=request)
+) -> dict[str, Any]:
+    version = (a2a_version or "1.0").strip()
+
+    if version == "1.0":
+        return {"version": "1.0", "payload": request.model_dump(by_alias=True, exclude_none=True), "conversion_warnings": []}
 
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
@@ -175,25 +181,17 @@ def negotiate_send_message(
 
     for w in captured:
         logger.warning("a2a v1.0->v0.3 conversion: %s", w.message)
-    return NegotiatedSendMessage(
-        version="0.3",
-        payload=converted,
-        conversion_warnings=[str(w.message) for w in captured],
-    )
 
-@app.post("/message:send")
-def message_send(
-    negotiated: Annotated[NegotiatedSendMessage, Depends(negotiate_send_message)],
-) -> dict[str, Any]:
     return {
-        "version": negotiated.version,
-        "payload": negotiated.payload.model_dump(by_alias=True, exclude_none=True),
-        "conversion_warnings": negotiated.conversion_warnings,
+        "version": "0.3",
+        "payload": converted.model_dump(by_alias=True, exclude_none=True),
+        "conversion_warnings": [str(w.message) for w in captured],
     }
 ```
 
-Warnings are both logged via `uvicorn.error` so they appear in the
-server console and echoed back in the response body so clients see them.
+Warnings are both logged via the `uvicorn.error` logger so they appear
+in the server console alongside the access log, and echoed back in the
+response body so clients can act on them.
 
 Run it:
 
@@ -232,7 +230,7 @@ Response:
 ## Project layout
 
 ```
-src/a2apydantic/
+src/a2a_pydantic/
 ├── base.py              # A2ABaseModel: shared config + camelCase aliases
 ├── converters.py        # v1.0 -> v0.3 converter + singledispatch entry point
 ├── v03/

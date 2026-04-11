@@ -15,7 +15,7 @@ dropped, coerced, or defaulted, a ``UserWarning`` is emitted so callers
 can see exactly which data was lost. Typical capture pattern::
 
     import warnings
-    from a2apydantic import convert_to_v03, v10
+    from a2a_pydantic import convert_to_v03, v10
 
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
@@ -33,7 +33,7 @@ from typing import Any, overload
 
 from pydantic import BaseModel
 
-from a2apydantic import v03, v10
+from a2a_pydantic import v03, v10
 
 __all__ = ["convert_to_v03"]
 

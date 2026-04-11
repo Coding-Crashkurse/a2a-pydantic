@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import Field, RootModel
 
-from a2apydantic.base import A2ABaseModel
+from a2a_pydantic.base import A2ABaseModel
 
 
 class A2A(RootModel[Any]):

@@ -7,7 +7,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from a2apydantic.base import A2ABaseModel
+from a2a_pydantic.base import A2ABaseModel
 from pydantic import AwareDatetime, Field, RootModel
 
 
