@@ -72,12 +72,15 @@ so you always wrap via `v03.Part(root=...)`.
 
 ## Downgrading v1.0 → v0.3
 
-`from_v10_to_v03` is a `singledispatch` entry point that picks the right
-converter for whatever v1.0 model you hand it:
+`convert_to_v03` is the single public entry point. It dispatches on the
+runtime type of whatever v1.0 model you hand it and returns the matching
+v0.3 model — fully type-checked via `@overload`, so your editor knows
+`convert_to_v03(v10.SendMessageRequest)` returns `v03.MessageSendParams`,
+`convert_to_v03(v10.Message)` returns `v03.Message`, etc.
 
 ```python
 import warnings
-from a2apydantic import v10, from_v10_to_v03
+from a2apydantic import convert_to_v03, v10
 
 req = v10.SendMessageRequest(
     message=v10.Message(
@@ -90,11 +93,19 @@ req = v10.SendMessageRequest(
 
 with warnings.catch_warnings(record=True) as captured:
     warnings.simplefilter("always")
-    params = from_v10_to_v03(req)  # -> v03.MessageSendParams
+    params = convert_to_v03(req)  # -> v03.MessageSendParams
 
 for w in captured:
     print("LOSS:", w.message)
 # LOSS: v10.SendMessageRequest.tenant='acme' is dropped (v0.3 has no tenant concept)
+```
+
+Pass an unsupported type and you get a `TypeError` instead of silent
+garbage:
+
+```python
+convert_to_v03(42)
+# TypeError: No v10 -> v03 converter registered for int
 ```
 
 **Every lossy step raises a `UserWarning`**, so you can either log them,
@@ -121,7 +132,7 @@ defaults for them would silently corrupt data.
 
 ### What's covered
 
-The dispatcher handles every data-carrying model pair:
+`convert_to_v03` handles every data-carrying model pair:
 
 | v1.0 | v0.3 | Notes |
 |---|---|---|
@@ -144,40 +155,45 @@ The dispatcher handles every data-carrying model pair:
 One endpoint, both wire formats. Client picks via `A2A-Version` header, and
 any conversion losses come back in the response so clients can act on them:
 
+The full example in [examples/fastapi_version_header.py](examples/fastapi_version_header.py)
+wraps the whole negotiation + conversion in a FastAPI dependency, so the
+route itself is a one-liner. The relevant parts:
+
 ```python
-# examples/fastapi_version_header.py
-import warnings
-from typing import Annotated, Any
-from fastapi import FastAPI, Header, HTTPException
+from a2apydantic import convert_to_v03, v03, v10
 
-from a2apydantic import v10
-from a2apydantic.converters import send_message_request
+def negotiate_send_message(
+    request: v10.SendMessageRequest,
+    a2a_version: Annotated[str | None, Header(alias="A2A-Version")] = None,
+) -> NegotiatedSendMessage:
+    if (a2a_version or "1.0") == "1.0":
+        return NegotiatedSendMessage(version="1.0", payload=request)
 
-app = FastAPI()
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        converted = convert_to_v03(request)  # v03.MessageSendParams
+
+    for w in captured:
+        logger.warning("a2a v1.0->v0.3 conversion: %s", w.message)
+    return NegotiatedSendMessage(
+        version="0.3",
+        payload=converted,
+        conversion_warnings=[str(w.message) for w in captured],
+    )
 
 @app.post("/message:send")
 def message_send(
-    request: v10.SendMessageRequest,
-    a2a_version: Annotated[str | None, Header(alias="A2A-Version")] = None,
+    negotiated: Annotated[NegotiatedSendMessage, Depends(negotiate_send_message)],
 ) -> dict[str, Any]:
-    version = (a2a_version or "1.0").strip()
-    if version == "1.0":
-        return {
-            "version": "1.0",
-            "payload": request.model_dump(by_alias=True, exclude_none=True),
-            "conversion_warnings": [],
-        }
-    if version == "0.3":
-        with warnings.catch_warnings(record=True) as captured:
-            warnings.simplefilter("always")
-            params = send_message_request(request)
-        return {
-            "version": "0.3",
-            "payload": params.model_dump(by_alias=True, exclude_none=True),
-            "conversion_warnings": [str(w.message) for w in captured],
-        }
-    raise HTTPException(400, f"Unsupported A2A-Version {version!r}")
+    return {
+        "version": negotiated.version,
+        "payload": negotiated.payload.model_dump(by_alias=True, exclude_none=True),
+        "conversion_warnings": negotiated.conversion_warnings,
+    }
 ```
+
+Warnings are both logged via `uvicorn.error` so they appear in the
+server console and echoed back in the response body so clients see them.
 
 Run it:
 

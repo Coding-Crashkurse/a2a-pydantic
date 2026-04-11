@@ -1,26 +1,41 @@
-"""Converters between A2A protocol versions.
+"""Downward conversion from A2A v1.0 models to v0.3 models.
 
-This module provides downward conversion from v1.0 models to v0.3 models.
+Public API is exactly one function: :func:`convert_to_v03`. Hand it any
+supported v1.0 model and it returns the matching v0.3 model, dispatching
+on the input type.
+
 Upward conversion (v0.3 -> v1.0) is intentionally not supported: v1.0
 introduces fields that have no v0.3 counterpart (``tenant`` on every
-request, ``protocol_binding``/``protocol_version`` split on interfaces,
+request, ``protocol_binding`` / ``protocol_version`` split on interfaces,
 device-code OAuth flow, per-task list RPC, AwareDatetime timestamps, ...),
 and inventing defaults for them would silently drop or corrupt data.
 
 Whenever a v1.0 field cannot be represented in v0.3 and has to be
 dropped, coerced, or defaulted, a ``UserWarning`` is emitted so callers
-can see exactly which data was lost.
+can see exactly which data was lost. Typical capture pattern::
+
+    import warnings
+    from a2apydantic import convert_to_v03, v10
+
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        params = convert_to_v03(v10_request)  # type: v03.MessageSendParams
+
+    for w in captured:
+        log.warning("a2a downgrade: %s", w.message)
 """
 
 from __future__ import annotations
 
 import warnings
 from functools import singledispatch
-from typing import Any
+from typing import Any, overload
 
 from pydantic import BaseModel
 
 from a2apydantic import v03, v10
+
+__all__ = ["convert_to_v03"]
 
 
 def _warn(message: str) -> None:
@@ -79,15 +94,15 @@ _API_KEY_LOCATION_TO_V03: dict[str, v03.In] = {
 }
 
 
-def role(v: v10.Role) -> v03.Role:
+def _role(v: v10.Role) -> v03.Role:
     return _ROLE_V10_TO_V03[v]
 
 
-def task_state(v: v10.TaskState) -> v03.TaskState:
+def _task_state(v: v10.TaskState) -> v03.TaskState:
     return _TASK_STATE_V10_TO_V03[v]
 
 
-def part(p: v10.Part) -> v03.Part:
+def _part(p: v10.Part) -> v03.Part:
     """Fan out a flat v1.0 ``Part`` to the correct v0.3 discriminated subtype.
 
     v1.0 bundles ``text``, ``raw``, ``url`` and ``data`` on a single model.
@@ -140,52 +155,52 @@ def part(p: v10.Part) -> v03.Part:
     return v03.Part(root=v03.DataPart(data=raw_value, metadata=metadata))
 
 
-def message(m: v10.Message) -> v03.Message:
+def _message(m: v10.Message) -> v03.Message:
     return v03.Message(
         context_id=m.context_id or None,
         extensions=list(m.extensions) if m.extensions else None,
         message_id=m.message_id,
         metadata=_struct_to_dict(m.metadata),
-        parts=[part(p) for p in m.parts],
+        parts=[_part(p) for p in m.parts],
         reference_task_ids=(
             list(m.reference_task_ids) if m.reference_task_ids else None
         ),
-        role=role(m.role),
+        role=_role(m.role),
         task_id=m.task_id or None,
     )
 
 
-def artifact(a: v10.Artifact) -> v03.Artifact:
+def _artifact(a: v10.Artifact) -> v03.Artifact:
     return v03.Artifact(
         artifact_id=a.artifact_id,
         description=a.description or None,
         extensions=list(a.extensions) if a.extensions else None,
         metadata=_struct_to_dict(a.metadata),
         name=a.name or None,
-        parts=[part(p) for p in a.parts],
+        parts=[_part(p) for p in a.parts],
     )
 
 
-def task_status(s: v10.TaskStatus) -> v03.TaskStatus:
+def _task_status(s: v10.TaskStatus) -> v03.TaskStatus:
     return v03.TaskStatus(
-        message=message(s.message) if s.message is not None else None,
-        state=task_state(s.state),
+        message=_message(s.message) if s.message is not None else None,
+        state=_task_state(s.state),
         timestamp=_timestamp_to_str(s.timestamp),
     )
 
 
-def task(t: v10.Task) -> v03.Task:
+def _task(t: v10.Task) -> v03.Task:
     return v03.Task(
-        artifacts=[artifact(a) for a in t.artifacts] if t.artifacts else None,
+        artifacts=[_artifact(a) for a in t.artifacts] if t.artifacts else None,
         context_id=t.context_id or "",
-        history=[message(m) for m in t.history] if t.history else None,
+        history=[_message(m) for m in t.history] if t.history else None,
         id=t.id,
         metadata=_struct_to_dict(t.metadata),
-        status=task_status(t.status),
+        status=_task_status(t.status),
     )
 
 
-def task_status_update_event(
+def _task_status_update_event(
     e: v10.TaskStatusUpdateEvent,
 ) -> v03.TaskStatusUpdateEvent:
     _warn(
@@ -196,17 +211,17 @@ def task_status_update_event(
         context_id=e.context_id,
         final=False,
         metadata=_struct_to_dict(e.metadata),
-        status=task_status(e.status),
+        status=_task_status(e.status),
         task_id=e.task_id,
     )
 
 
-def task_artifact_update_event(
+def _task_artifact_update_event(
     e: v10.TaskArtifactUpdateEvent,
 ) -> v03.TaskArtifactUpdateEvent:
     return v03.TaskArtifactUpdateEvent(
         append=e.append,
-        artifact=artifact(e.artifact),
+        artifact=_artifact(e.artifact),
         context_id=e.context_id,
         last_chunk=e.last_chunk,
         metadata=_struct_to_dict(e.metadata),
@@ -214,7 +229,7 @@ def task_artifact_update_event(
     )
 
 
-def authentication_info(
+def _authentication_info(
     a: v10.AuthenticationInfo,
 ) -> v03.PushNotificationAuthenticationInfo:
     return v03.PushNotificationAuthenticationInfo(
@@ -223,18 +238,9 @@ def authentication_info(
     )
 
 
-def push_notification_config(
+def _push_notification_config(
     c: v10.TaskPushNotificationConfig,
 ) -> v03.PushNotificationConfig:
-    """Extract the inner ``PushNotificationConfig`` from a v1.0
-    ``TaskPushNotificationConfig``.
-
-    v1.0 keeps ``task_id`` alongside the push-notification settings on a
-    flat model. v0.3 splits these into an outer ``TaskPushNotificationConfig``
-    wrapping an inner ``PushNotificationConfig``. This helper returns just
-    the inner piece; use :func:`task_push_notification_config` when you
-    also need the outer wrapper.
-    """
     if c.tenant:
         _warn(
             f"v10.TaskPushNotificationConfig.tenant={c.tenant!r} is dropped "
@@ -242,7 +248,7 @@ def push_notification_config(
         )
     return v03.PushNotificationConfig(
         authentication=(
-            authentication_info(c.authentication)
+            _authentication_info(c.authentication)
             if c.authentication is not None
             else None
         ),
@@ -252,21 +258,21 @@ def push_notification_config(
     )
 
 
-def task_push_notification_config(
+def _task_push_notification_config(
     c: v10.TaskPushNotificationConfig,
 ) -> v03.TaskPushNotificationConfig:
     return v03.TaskPushNotificationConfig(
-        push_notification_config=push_notification_config(c),
+        push_notification_config=_push_notification_config(c),
         task_id=c.task_id,
     )
 
 
-def send_message_configuration(
+def _send_message_configuration(
     c: v10.SendMessageConfiguration,
 ) -> v03.MessageSendConfiguration:
     push_cfg: v03.PushNotificationConfig | None = None
     if c.task_push_notification_config is not None:
-        push_cfg = push_notification_config(c.task_push_notification_config)
+        push_cfg = _push_notification_config(c.task_push_notification_config)
 
     return v03.MessageSendConfiguration(
         accepted_output_modes=(
@@ -278,7 +284,7 @@ def send_message_configuration(
     )
 
 
-def send_message_request(r: v10.SendMessageRequest) -> v03.MessageSendParams:
+def _send_message_request(r: v10.SendMessageRequest) -> v03.MessageSendParams:
     """Convert a v1.0 ``SendMessageRequest`` to a v0.3 ``MessageSendParams``.
 
     Note the asymmetry: v1.0 ``SendMessageRequest`` corresponds to the
@@ -292,16 +298,16 @@ def send_message_request(r: v10.SendMessageRequest) -> v03.MessageSendParams:
         )
     return v03.MessageSendParams(
         configuration=(
-            send_message_configuration(r.configuration)
+            _send_message_configuration(r.configuration)
             if r.configuration is not None
             else None
         ),
-        message=message(r.message),
+        message=_message(r.message),
         metadata=_struct_to_dict(r.metadata),
     )
 
 
-def agent_extension(e: v10.AgentExtension) -> v03.AgentExtension:
+def _agent_extension(e: v10.AgentExtension) -> v03.AgentExtension:
     if not e.uri:
         _warn(
             "v10.AgentExtension.uri is empty; v0.3 requires a non-empty URI, "
@@ -315,10 +321,10 @@ def agent_extension(e: v10.AgentExtension) -> v03.AgentExtension:
     )
 
 
-def agent_capabilities(c: v10.AgentCapabilities) -> v03.AgentCapabilities:
+def _agent_capabilities(c: v10.AgentCapabilities) -> v03.AgentCapabilities:
     return v03.AgentCapabilities(
         extensions=(
-            [agent_extension(x) for x in c.extensions] if c.extensions else None
+            [_agent_extension(x) for x in c.extensions] if c.extensions else None
         ),
         push_notifications=c.push_notifications,
         state_transition_history=None,
@@ -326,7 +332,7 @@ def agent_capabilities(c: v10.AgentCapabilities) -> v03.AgentCapabilities:
     )
 
 
-def agent_interface(i: v10.AgentInterface) -> v03.AgentInterface:
+def _agent_interface(i: v10.AgentInterface) -> v03.AgentInterface:
     if i.tenant:
         _warn(
             f"v10.AgentInterface.tenant={i.tenant!r} is dropped "
@@ -340,7 +346,7 @@ def agent_interface(i: v10.AgentInterface) -> v03.AgentInterface:
     return v03.AgentInterface(transport=i.protocol_binding, url=i.url)
 
 
-def agent_provider(p: v10.AgentProvider) -> v03.AgentProvider:
+def _agent_provider(p: v10.AgentProvider) -> v03.AgentProvider:
     return v03.AgentProvider(organization=p.organization, url=p.url)
 
 
@@ -350,7 +356,7 @@ def _security_requirement_to_dict(
     return {name: list(sl.strings) for name, sl in req.schemes.items()}
 
 
-def agent_skill(s: v10.AgentSkill) -> v03.AgentSkill:
+def _agent_skill(s: v10.AgentSkill) -> v03.AgentSkill:
     security: list[dict[str, list[str]]] | None = None
     if s.security_requirements:
         security = [_security_requirement_to_dict(r) for r in s.security_requirements]
@@ -366,7 +372,7 @@ def agent_skill(s: v10.AgentSkill) -> v03.AgentSkill:
     )
 
 
-def agent_card_signature(
+def _agent_card_signature(
     s: v10.AgentCardSignature,
 ) -> v03.AgentCardSignature:
     return v03.AgentCardSignature(
@@ -456,7 +462,7 @@ def _password_flow(f: v10.PasswordOAuthFlow) -> v03.PasswordOAuthFlow:
     )
 
 
-def oauth_flows(f: v10.OAuthFlows) -> v03.OAuthFlows:
+def _oauth_flows(f: v10.OAuthFlows) -> v03.OAuthFlows:
     if f.device_code is not None:
         _warn(
             "v10.OAuthFlows.device_code has no v0.3 equivalent and was dropped"
@@ -480,12 +486,12 @@ def oauth_flows(f: v10.OAuthFlows) -> v03.OAuthFlows:
 def _oauth2_scheme(s: v10.OAuth2SecurityScheme) -> v03.OAuth2SecurityScheme:
     return v03.OAuth2SecurityScheme(
         description=s.description or None,
-        flows=oauth_flows(s.flows),
+        flows=_oauth_flows(s.flows),
         oauth2_metadata_url=s.oauth2_metadata_url or None,
     )
 
 
-def security_scheme(s: v10.SecurityScheme) -> v03.SecurityScheme:
+def _security_scheme(s: v10.SecurityScheme) -> v03.SecurityScheme:
     """Pick the single populated sub-scheme and emit the v0.3 union variant.
 
     v1.0 ``SecurityScheme`` is an envelope with five optional fields, one
@@ -538,7 +544,7 @@ def security_scheme(s: v10.SecurityScheme) -> v03.SecurityScheme:
     return candidates[0][1]
 
 
-def agent_card(c: v10.AgentCard) -> v03.AgentCard:
+def _agent_card(c: v10.AgentCard) -> v03.AgentCard:
     """Convert a v1.0 ``AgentCard`` into a v0.3 ``AgentCard``.
 
     The biggest shape mismatch is the interface list: v1.0 has a single
@@ -557,7 +563,7 @@ def agent_card(c: v10.AgentCard) -> v03.AgentCard:
 
     main_iface = c.supported_interfaces[0]
     additional = (
-        [agent_interface(i) for i in c.supported_interfaces[1:]]
+        [_agent_interface(i) for i in c.supported_interfaces[1:]]
         if len(c.supported_interfaces) > 1
         else None
     )
@@ -578,12 +584,12 @@ def agent_card(c: v10.AgentCard) -> v03.AgentCard:
     security_schemes: dict[str, v03.SecurityScheme] | None = None
     if c.security_schemes:
         security_schemes = {
-            name: security_scheme(scheme) for name, scheme in c.security_schemes.items()
+            name: _security_scheme(scheme) for name, scheme in c.security_schemes.items()
         }
 
     return v03.AgentCard(
         additional_interfaces=additional,
-        capabilities=agent_capabilities(c.capabilities),
+        capabilities=_agent_capabilities(c.capabilities),
         default_input_modes=list(c.default_input_modes),
         default_output_modes=list(c.default_output_modes),
         description=c.description,
@@ -592,50 +598,97 @@ def agent_card(c: v10.AgentCard) -> v03.AgentCard:
         name=c.name,
         preferred_transport=main_iface.protocol_binding or "JSONRPC",
         protocol_version="0.3.0",
-        provider=agent_provider(c.provider) if c.provider is not None else None,
+        provider=_agent_provider(c.provider) if c.provider is not None else None,
         security=security,
         security_schemes=security_schemes,
         signatures=(
-            [agent_card_signature(s) for s in c.signatures] if c.signatures else None
+            [_agent_card_signature(s) for s in c.signatures] if c.signatures else None
         ),
-        skills=[agent_skill(s) for s in c.skills],
+        skills=[_agent_skill(s) for s in c.skills],
         supports_authenticated_extended_card=c.capabilities.extended_agent_card,
         url=main_iface.url,
         version=c.version,
     )
 
 
+@overload
+def convert_to_v03(obj: v10.SendMessageRequest) -> v03.MessageSendParams: ...
+@overload
+def convert_to_v03(obj: v10.SendMessageConfiguration) -> v03.MessageSendConfiguration: ...
+@overload
+def convert_to_v03(obj: v10.Message) -> v03.Message: ...
+@overload
+def convert_to_v03(obj: v10.Part) -> v03.Part: ...
+@overload
+def convert_to_v03(obj: v10.Artifact) -> v03.Artifact: ...
+@overload
+def convert_to_v03(obj: v10.Task) -> v03.Task: ...
+@overload
+def convert_to_v03(obj: v10.TaskStatus) -> v03.TaskStatus: ...
+@overload
+def convert_to_v03(obj: v10.TaskStatusUpdateEvent) -> v03.TaskStatusUpdateEvent: ...
+@overload
+def convert_to_v03(obj: v10.TaskArtifactUpdateEvent) -> v03.TaskArtifactUpdateEvent: ...
+@overload
+def convert_to_v03(obj: v10.AuthenticationInfo) -> v03.PushNotificationAuthenticationInfo: ...
+@overload
+def convert_to_v03(obj: v10.TaskPushNotificationConfig) -> v03.TaskPushNotificationConfig: ...
+@overload
+def convert_to_v03(obj: v10.AgentCard) -> v03.AgentCard: ...
+@overload
+def convert_to_v03(obj: v10.AgentCapabilities) -> v03.AgentCapabilities: ...
+@overload
+def convert_to_v03(obj: v10.AgentInterface) -> v03.AgentInterface: ...
+@overload
+def convert_to_v03(obj: v10.AgentProvider) -> v03.AgentProvider: ...
+@overload
+def convert_to_v03(obj: v10.AgentExtension) -> v03.AgentExtension: ...
+@overload
+def convert_to_v03(obj: v10.AgentSkill) -> v03.AgentSkill: ...
+@overload
+def convert_to_v03(obj: v10.AgentCardSignature) -> v03.AgentCardSignature: ...
+@overload
+def convert_to_v03(obj: v10.SecurityScheme) -> v03.SecurityScheme: ...
+@overload
+def convert_to_v03(obj: v10.OAuthFlows) -> v03.OAuthFlows: ...
 @singledispatch
-def from_v10_to_v03(obj: Any) -> Any:
-    """Dispatch a v1.0 model to the matching v0.3 converter.
+def convert_to_v03(obj: Any) -> Any:
+    """Downgrade a v1.0 A2A model to its v0.3 equivalent.
 
-    Falls back to a ``TypeError`` for unsupported types rather than
-    silently returning the input, so callers notice when they forget to
-    handle a message shape.
+    Dispatches on the runtime type of ``obj``. Raises :class:`TypeError`
+    for unsupported types rather than silently returning the input, so
+    callers notice when they hand in something the converter doesn't
+    know about.
+
+    Every lossy step (``tenant`` fields, multi-payload parts,
+    ``TaskStatusUpdateEvent.final`` default, dropped OAuth flows, ...)
+    emits a ``UserWarning``. Wrap the call in
+    :func:`warnings.catch_warnings` to capture them for logging or
+    returning to clients.
     """
     raise TypeError(f"No v10 -> v03 converter registered for {type(obj).__name__}")
 
 
 for _v10_type, _fn in {
-    v10.Message: message,
-    v10.Part: part,
-    v10.Artifact: artifact,
-    v10.Task: task,
-    v10.TaskStatus: task_status,
-    v10.TaskStatusUpdateEvent: task_status_update_event,
-    v10.TaskArtifactUpdateEvent: task_artifact_update_event,
-    v10.AuthenticationInfo: authentication_info,
-    v10.TaskPushNotificationConfig: task_push_notification_config,
-    v10.SendMessageConfiguration: send_message_configuration,
-    v10.SendMessageRequest: send_message_request,
-    v10.AgentCard: agent_card,
-    v10.AgentCapabilities: agent_capabilities,
-    v10.AgentInterface: agent_interface,
-    v10.AgentProvider: agent_provider,
-    v10.AgentExtension: agent_extension,
-    v10.AgentSkill: agent_skill,
-    v10.AgentCardSignature: agent_card_signature,
-    v10.SecurityScheme: security_scheme,
-    v10.OAuthFlows: oauth_flows,
+    v10.Message: _message,
+    v10.Part: _part,
+    v10.Artifact: _artifact,
+    v10.Task: _task,
+    v10.TaskStatus: _task_status,
+    v10.TaskStatusUpdateEvent: _task_status_update_event,
+    v10.TaskArtifactUpdateEvent: _task_artifact_update_event,
+    v10.AuthenticationInfo: _authentication_info,
+    v10.TaskPushNotificationConfig: _task_push_notification_config,
+    v10.SendMessageConfiguration: _send_message_configuration,
+    v10.SendMessageRequest: _send_message_request,
+    v10.AgentCard: _agent_card,
+    v10.AgentCapabilities: _agent_capabilities,
+    v10.AgentInterface: _agent_interface,
+    v10.AgentProvider: _agent_provider,
+    v10.AgentExtension: _agent_extension,
+    v10.AgentSkill: _agent_skill,
+    v10.AgentCardSignature: _agent_card_signature,
+    v10.SecurityScheme: _security_scheme,
+    v10.OAuthFlows: _oauth_flows,
 }.items():
-    from_v10_to_v03.register(_v10_type)(_fn)
+    convert_to_v03.register(_v10_type)(_fn)
