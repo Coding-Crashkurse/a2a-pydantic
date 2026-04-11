@@ -322,6 +322,36 @@ Response:
 }
 ```
 
+## Sample agent: SDK-native vs. typed
+
+A side-by-side pair of minimal A2A sample agents showing what you get
+with and without `a2a-pydantic`:
+
+- [examples/a2a_10_proto.py](examples/a2a_10_proto.py) — the **SDK-native
+  way**. Builds `AgentCard`, `AgentSkill`, `Part` etc. directly from
+  `a2a.types` (pb2 classes). Works, but every field access is unchecked:
+  no autocomplete, no type errors, no validation, typos silently
+  dropped by pb2.
+- [examples/a2a_10_proto_typed.py](examples/a2a_10_proto_typed.py) — the
+  **typed way**. Same agent, same behavior, but built as
+  `a2a_pydantic.v10` Pydantic models with `convert_to_proto` at the SDK
+  boundary. Full IDE autocomplete, `pyright` / `mypy` coverage, Pydantic
+  validation at construction time.
+
+Both files are REST-only (no JSON-RPC, no gRPC) so the comparison stays
+focused on the typing story — the delta between them is the thing
+worth seeing. Both run against `a2a-sdk>=1.0.0a1`:
+
+```bash
+uv pip install -e ".[example]"
+python examples/a2a_10_proto.py          # SDK-native
+python examples/a2a_10_proto_typed.py    # typed
+```
+
+Either version exposes the agent at `http://127.0.0.1:41241` with the
+card at `/.well-known/agent-card.json` and the REST routes under
+`/a2a/rest/v1/`.
+
 ## Project layout
 
 ```

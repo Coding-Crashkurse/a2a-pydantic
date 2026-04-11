@@ -1,10 +1,10 @@
-"""Typed mirror of examples/a2a_10_proto.py (REST-only, simplified).
+"""Typed twin of examples/a2a_10_proto.py — same agent, full static typing.
 
-The reference example (a2a_10_proto.py) builds its ``AgentCard``,
-``AgentSkill``, ``AgentInterface``, ``Part`` and friends directly from
-``a2a.types`` — which are protobuf classes. Those classes give you zero
-IDE autocomplete, zero static type checking, and will happily accept a
-typo'd field name at runtime and silently drop it.
+The companion file ``a2a_10_proto.py`` shows the SDK-native way: import
+``AgentCard``, ``AgentSkill``, ``Part`` etc. directly from ``a2a.types``
+(protobuf classes) and hand them to the request handler. That works,
+but every field you touch is unchecked — no IDE autocomplete, no type
+errors, no validation, typos silently dropped by pb2.
 
 This version builds the same agent using **a2a-pydantic v1.0 Pydantic
 models** for everything we construct ourselves and only bridges to pb2
