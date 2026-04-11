@@ -34,19 +34,28 @@ The PyPI distribution name uses a hyphen (`a2a-pydantic`), the Python
 import name uses an underscore (`a2a_pydantic`). Standard Python
 convention — same as e.g. `pydantic-settings` → `pydantic_settings`.
 
-For the v1.0 → protobuf bridge (`convert_to_proto`), install with the
-`[proto]` extra:
+Requires Python 3.13+ and Pydantic 2. The core package has **zero
+runtime dependencies beyond Pydantic**.
+
+Two optional extras are available:
+
+| Extra | Pulls in | For |
+|---|---|---|
+| `[proto]` | `a2a-sdk>=1.0.0a0` | `convert_to_proto` (v1.0 → pb2 bridge) |
+| `[example]` | `a2a-sdk[http-server]`, `fastapi`, `uvicorn`, `sse-starlette` | Running the example apps in `examples/` |
 
 ```bash
-pip install a2a-pydantic[proto]
+pip install a2a-pydantic[proto]       # + a2a-sdk for convert_to_proto
+pip install a2a-pydantic[example]     # + full stack for the example servers
 ```
 
-which pulls in `a2a-sdk>=1.0.0a0` for its `a2a_pb2` classes. Without
-the extra, the rest of the package works as usual — the proto bridge
-module is lazy-loaded and only imported when you actually call
-`convert_to_proto`.
-
-Requires Python 3.13+ and Pydantic 2.
+Without any extra, `convert_to_proto` is still importable (via PEP 562
+lazy attribute loading) but raises a clear `ImportError` when you call
+it, pointing at the `[proto]` install command. The `[example]` extra is
+only needed if you actually want to run
+[examples/fastapi_version_header.py](examples/fastapi_version_header.py)
+or
+[examples/a2a_10_proto_typed.py](examples/a2a_10_proto_typed.py).
 
 ## Basic usage — v1.0 models
 

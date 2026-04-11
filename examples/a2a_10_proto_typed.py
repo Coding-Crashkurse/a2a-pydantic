@@ -31,10 +31,14 @@ What stays the same:
 * The agent's behavior is byte-identical — same greeting logic, same
   artifact shape, same lifecycle events
 
-Install & run::
+Install & run (from the repo root, with the venv active)::
 
-    pip install a2a-pydantic[proto] "a2a-sdk[http-server]>=1.0.0a0" uvicorn
-    PYTHONPATH=src python examples/a2a_10_proto_typed.py
+    uv pip install -e ".[example]"
+    python examples/a2a_10_proto_typed.py
+
+The ``[example]`` extra pulls in ``a2a-sdk[http-server]``, ``fastapi``,
+``uvicorn`` and ``sse-starlette``. The core package stays minimal —
+``pip install a2a-pydantic`` alone only depends on ``pydantic``.
 
 Then send a JSON-RPC ``message/send`` to
 ``http://127.0.0.1:41241/a2a/jsonrpc``.

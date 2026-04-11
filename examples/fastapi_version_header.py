@@ -1,9 +1,9 @@
 """FastAPI example: serve MessageSendParams in both A2A versions.
 
-Run with::
+Run with (from the repo root, with the venv active)::
 
-    uv pip install fastapi uvicorn
-    PYTHONPATH=src uvicorn examples.fastapi_version_header:app --reload
+    uv pip install -e ".[example]"
+    uvicorn examples.fastapi_version_header:app --reload
 
 Send a v1.0 SendMessageRequest body. Use the ``A2A-Version`` header to pick
 the response format:
