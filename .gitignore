@@ -1,3 +1,6 @@
+# Codegen working directory: raw schemas, downloaded spec HTML, intermediates
+.build/
+
 # IDE-only reference files (not part of the package, not committed)
 _a2a_v03_reference.py
 a2a_pb2.py
