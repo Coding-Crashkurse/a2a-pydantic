@@ -34,6 +34,18 @@ The PyPI distribution name uses a hyphen (`a2a-pydantic`), the Python
 import name uses an underscore (`a2a_pydantic`). Standard Python
 convention — same as e.g. `pydantic-settings` → `pydantic_settings`.
 
+For the v1.0 → protobuf bridge (`convert_to_proto`), install with the
+`[proto]` extra:
+
+```bash
+pip install a2a-pydantic[proto]
+```
+
+which pulls in `a2a-sdk>=1.0.0a0` for its `a2a_pb2` classes. Without
+the extra, the rest of the package works as usual — the proto bridge
+module is lazy-loaded and only imported when you actually call
+`convert_to_proto`.
+
 Requires Python 3.13+ and Pydantic 2.
 
 ## Basic usage — v1.0 models
@@ -154,6 +166,80 @@ defaults for them would silently corrupt data.
 | `OAuthFlows` + all flows | same | `device_code` dropped |
 | `Role`, `TaskState` enums | same | Protobuf → lowercase mapping |
 
+## Bridging v1.0 → a2a-sdk protobuf
+
+`convert_to_proto` is the v1.0 → pb2 counterpart to `convert_to_v03`.
+Requires `pip install a2a-pydantic[proto]` which pulls in `a2a-sdk>=1.0.0a0`
+for the `a2a_pb2` module. Dispatches on the input type, returns the
+matching pb2 `Message` instance, typed via `@overload` so the editor
+knows `convert_to_proto(v10.SendMessageRequest)` returns
+`a2a_pb2.SendMessageRequest`.
+
+```python
+from a2a_pydantic import convert_to_proto, v10
+from a2a.types import a2a_pb2
+
+req = v10.SendMessageRequest(
+    message=v10.Message(
+        message_id="m-1",
+        role=v10.Role.role_user,
+        parts=[v10.Part(text="hello")],
+    ),
+    tenant="acme",
+)
+pb_req = convert_to_proto(req)               # -> a2a_pb2.SendMessageRequest
+wire = pb_req.SerializeToString()             # bytes, ready for gRPC
+```
+
+Only v1.0 types are supported — v0.3 has no direct proto counterpart.
+Handing in something unsupported raises `TypeError`.
+
+**Lazy loading:** `a2a_pydantic` top-level does NOT eagerly import
+`to_proto`. It's only resolved the first time you access
+`a2a_pydantic.convert_to_proto` (via PEP 562 `__getattr__`). If you
+never call it, you never pay the `a2a-sdk` import cost — and if you
+never installed the `[proto]` extra, the rest of the package still
+works fine.
+
+```python
+# Without [proto] installed:
+from a2a_pydantic import v03, v10, convert_to_v03   # OK, works
+from a2a_pydantic import convert_to_proto           # ImportError: install with [proto]
+```
+
+**Oneof semantics:** pb2 `Part`, `SecurityScheme`, `OAuthFlows`,
+`SendMessageResponse` and `StreamResponse` all use `oneof` fields
+internally. Pydantic v1.0 models model these flat (multiple Optional
+fields that could all be set). If you populate more than one at once,
+`convert_to_proto` emits a `UserWarning` — pb2 would otherwise silently
+collapse to the last write and drop your earlier data.
+
+### What's covered
+
+`convert_to_proto` handles every v1.0 model that has a pb2 counterpart
+in `a2a.types.a2a_pb2` — 34 types in total:
+
+- Messages: `Message`, `Part`, `Artifact`, `Task`, `TaskStatus`,
+  `TaskStatusUpdateEvent`, `TaskArtifactUpdateEvent`
+- Requests / responses: `SendMessageRequest`, `SendMessageResponse`,
+  `SendMessageConfiguration`, `StreamResponse`, `GetTaskRequest`,
+  `ListTasksRequest`, `ListTasksResponse`, `CancelTaskRequest`,
+  `GetTaskPushNotificationConfigRequest`,
+  `DeleteTaskPushNotificationConfigRequest`, `SubscribeToTaskRequest`,
+  `ListTaskPushNotificationConfigsRequest`,
+  `ListTaskPushNotificationConfigsResponse`,
+  `GetExtendedAgentCardRequest`
+- Config / metadata: `TaskPushNotificationConfig`, `AuthenticationInfo`,
+  `AgentCard`, `AgentCapabilities`, `AgentInterface`, `AgentProvider`,
+  `AgentExtension`, `AgentSkill`, `AgentCardSignature`
+- Security: `SecurityScheme`, `SecurityRequirement`, `StringList`,
+  `OAuthFlows`
+
+`Struct` fields are encoded via `google.protobuf.struct_pb2.Struct`,
+`Value` fields via `struct_pb2.Value`, `Timestamp` via
+`timestamp_pb2.Timestamp`, and `Part.raw` is base64-decoded to pb2's
+`bytes` field.
+
 ## FastAPI: version-header routing
 
 One endpoint, both wire formats. Client picks via `A2A-Version` header, and
@@ -232,7 +318,8 @@ Response:
 ```
 src/a2a_pydantic/
 ├── base.py              # A2ABaseModel: shared config + camelCase aliases
-├── converters.py        # v1.0 -> v0.3 converter + singledispatch entry point
+├── converters.py        # v1.0 -> v0.3 converter (SDK-free)
+├── to_proto.py          # v1.0 -> a2a-sdk pb2 bridge (requires [proto] extra)
 ├── v03/
 │   └── models.py        # v0.3 models (A2A JSON Schema)
 └── v10/

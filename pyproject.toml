@@ -5,6 +5,9 @@ description = "Pydantic models for A2A protocol (v0.3 + v1.0)"
 requires-python = ">=3.13"
 dependencies = ["pydantic>=2.0"]
 
+[project.optional-dependencies]
+proto = ["a2a-sdk>=1.0.0a0"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
