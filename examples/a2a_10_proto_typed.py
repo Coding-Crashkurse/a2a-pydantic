@@ -10,8 +10,8 @@ This version builds exactly the same agent, exactly the same way, but
 uses **a2a-pydantic v1.0 Pydantic models** for everything we construct
 ourselves and only bridges to pb2 at the SDK boundary via
 ``convert_to_proto``. The ``a2a-sdk`` side (request handler, task store,
-FastAPI app wiring) is unchanged — we only swap the type-unsafe
-construction calls.
+route factories, gRPC handler) is unchanged — we only swap the
+type-unsafe construction calls.
 
 What you gain:
 
@@ -27,7 +27,7 @@ What you gain:
 What stays the same:
 
 * The ``AgentExecutor`` subclass structure, ``TaskUpdater`` usage, and
-  the JSON-RPC / REST route wiring all come from ``a2a-sdk`` as-is
+  the JSON-RPC / REST / gRPC route wiring all come from ``a2a-sdk`` as-is
 * The agent's behavior is byte-identical — same greeting logic, same
   artifact shape, same lifecycle events
 
@@ -36,12 +36,14 @@ Install & run (from the repo root, with the venv active)::
     uv pip install -e ".[example]"
     python examples/a2a_10_proto_typed.py
 
-The ``[example]`` extra pulls in ``a2a-sdk[http-server]``, ``fastapi``,
-``uvicorn`` and ``sse-starlette``. The core package stays minimal —
-``pip install a2a-pydantic`` alone only depends on ``pydantic``.
+The ``[example]`` extra pulls in ``a2a-sdk[http-server,grpc]``,
+``fastapi``, ``uvicorn`` and ``sse-starlette``. The core package stays
+minimal — ``pip install a2a-pydantic`` alone only depends on
+``pydantic``.
 
-Then send a JSON-RPC ``message/send`` to
-``http://127.0.0.1:41241/a2a/jsonrpc``.
+Requires ``a2a-sdk>=1.0.0a1`` (the ``a2a.server.routes`` module was
+introduced in the a1 alpha; the earlier a0 release used a different
+app-class-based API).
 """
 
 from __future__ import annotations
@@ -50,17 +52,24 @@ import asyncio
 import contextlib
 import logging
 
+import grpc
 import uvicorn
 from fastapi import FastAPI
 
+from a2a.compat.v0_3 import a2a_v0_3_pb2_grpc
+from a2a.compat.v0_3.grpc_handler import CompatGrpcHandler
 from a2a.server.agent_execution.agent_executor import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
-from a2a.server.apps.jsonrpc import A2AFastAPIApplication
-from a2a.server.apps.rest import A2ARESTFastAPIApplication
 from a2a.server.events.event_queue import EventQueue
-from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.request_handlers import DefaultRequestHandler, GrpcHandler
+from a2a.server.routes import (
+    create_agent_card_routes,
+    create_jsonrpc_routes,
+    create_rest_routes,
+)
 from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
 from a2a.server.tasks.task_updater import TaskUpdater
+from a2a.types import a2a_pb2_grpc
 
 from a2a_pydantic import convert_to_proto, v10
 
@@ -152,7 +161,7 @@ class SampleAgentExecutor(AgentExecutor):
 
 
 def build_typed_agent_card(
-    host: str, port: int
+    host: str, port: int, grpc_port: int, compat_grpc_port: int
 ) -> v10.AgentCard:
     """Build the agent card as a fully typed ``v10.AgentCard``.
 
@@ -188,6 +197,16 @@ def build_typed_agent_card(
         ],
         supported_interfaces=[
             v10.AgentInterface(
+                protocol_binding="GRPC",
+                protocol_version="1.0",
+                url=f"{host}:{grpc_port}",
+            ),
+            v10.AgentInterface(
+                protocol_binding="GRPC",
+                protocol_version="0.3",
+                url=f"{host}:{compat_grpc_port}",
+            ),
+            v10.AgentInterface(
                 protocol_binding="JSONRPC",
                 protocol_version="1.0",
                 url=f"http://{host}:{port}/a2a/jsonrpc",
@@ -214,46 +233,67 @@ def build_typed_agent_card(
 async def serve(
     host: str = "127.0.0.1",
     port: int = 41241,
+    grpc_port: int = 50051,
+    compat_grpc_port: int = 50052,
 ) -> None:
-    """Run the typed Sample Agent server on JSON-RPC + REST."""
-    typed_card = build_typed_agent_card(host, port)
+    """Run the typed Sample Agent server on JSON-RPC, REST and gRPC."""
+    typed_card = build_typed_agent_card(host, port, grpc_port, compat_grpc_port)
     pb_card = convert_to_proto(typed_card)
 
     task_store = InMemoryTaskStore()
     request_handler = DefaultRequestHandler(
         agent_executor=SampleAgentExecutor(),
         task_store=task_store,
+        agent_card=pb_card,
     )
+
+    rest_routes = create_rest_routes(
+        request_handler=request_handler,
+        path_prefix="/a2a/rest",
+        enable_v0_3_compat=True,
+    )
+    jsonrpc_routes = create_jsonrpc_routes(
+        request_handler=request_handler,
+        rpc_url="/a2a/jsonrpc",
+        enable_v0_3_compat=True,
+    )
+    agent_card_routes = create_agent_card_routes(agent_card=pb_card)
 
     app = FastAPI(title="Sample Agent (typed)")
+    app.routes.extend(jsonrpc_routes)
+    app.routes.extend(agent_card_routes)
+    app.routes.extend(rest_routes)
 
-    jsonrpc_app = A2AFastAPIApplication(
-        agent_card=pb_card,
-        http_handler=request_handler,
-        enable_v0_3_compat=True,
-    )
-    jsonrpc_app.add_routes_to_app(app, rpc_url="/a2a/jsonrpc")
+    grpc_server = grpc.aio.server()
+    grpc_server.add_insecure_port(f"{host}:{grpc_port}")
+    servicer = GrpcHandler(request_handler)
+    a2a_pb2_grpc.add_A2AServiceServicer_to_server(servicer, grpc_server)
 
-    rest_app = A2ARESTFastAPIApplication(
-        agent_card=pb_card,
-        http_handler=request_handler,
-        enable_v0_3_compat=True,
+    compat_grpc_server = grpc.aio.server()
+    compat_grpc_server.add_insecure_port(f"{host}:{compat_grpc_port}")
+    compat_servicer = CompatGrpcHandler(request_handler)
+    a2a_v0_3_pb2_grpc.add_A2AServiceServicer_to_server(
+        compat_servicer, compat_grpc_server
     )
-    rest_fastapi = rest_app.build(rpc_url="/a2a/rest")
-    for route in rest_fastapi.routes:
-        app.routes.append(route)
 
     config = uvicorn.Config(app, host=host, port=port)
     uvicorn_server = uvicorn.Server(config)
 
-    logger.info("Starting Sample Agent (typed) on http://%s:%s", host, port)
+    logger.info("Starting typed Sample Agent servers:")
+    logger.info(" - HTTP on http://%s:%s", host, port)
+    logger.info(" - gRPC on %s:%s", host, grpc_port)
+    logger.info(" - gRPC (v0.3 compat) on %s:%s", host, compat_grpc_port)
     logger.info(
         "Agent Card available at http://%s:%s/.well-known/agent-card.json",
         host,
         port,
     )
 
-    await uvicorn_server.serve()
+    await asyncio.gather(
+        grpc_server.start(),
+        compat_grpc_server.start(),
+        uvicorn_server.serve(),
+    )
 
 
 if __name__ == "__main__":

@@ -6,9 +6,9 @@ requires-python = ">=3.13"
 dependencies = ["pydantic>=2.0"]
 
 [project.optional-dependencies]
-proto = ["a2a-sdk>=1.0.0a0"]
+proto = ["a2a-sdk>=1.0.0a1"]
 example = [
-    "a2a-sdk[http-server]>=1.0.0a0",
+    "a2a-sdk[grpc,http-server]>=1.0.0a1",
     "fastapi>=0.135.3",
     "uvicorn>=0.44.0",
     "sse-starlette>=3.3.4",
