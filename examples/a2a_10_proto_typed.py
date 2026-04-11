@@ -1,49 +1,44 @@
-"""Typed twin of examples/a2a_10_proto.py — same agent, full static typing.
+"""Typed twin of examples/a2a_10_proto.py — typed FastAPI facade.
 
 The companion file ``a2a_10_proto.py`` shows the SDK-native way: import
 ``AgentCard``, ``AgentSkill``, ``Part`` etc. directly from ``a2a.types``
 (protobuf classes) and hand them to the request handler. That works,
 but every field you touch is unchecked — no IDE autocomplete, no type
-errors, no validation, typos silently dropped by pb2.
+errors, no validation, typos silently dropped by pb2. On top of that,
+the SDK's own routes are plain ``starlette.routing.Route`` instances,
+so FastAPI's OpenAPI generator cannot see them and ``/docs`` shows
+"No operations defined in spec".
 
-This version builds the same agent using **a2a-pydantic v1.0 Pydantic
-models** for everything we construct ourselves and only bridges to pb2
-at the SDK boundary via ``convert_to_proto``. The ``a2a-sdk`` side
-(request handler, task store, REST route factories) is unchanged — we
-only swap the type-unsafe construction calls.
+This file fixes both problems with a typed FastAPI facade in front of
+``DefaultRequestHandler``:
 
-Compared to the reference sample this version drops the JSON-RPC and
-gRPC transports — only HTTP+JSON REST is exposed, because the point of
-the demo is "typed v10 models on the way in, pb2 at the SDK boundary",
-not transport coverage. Adding JSON-RPC or gRPC back is a matter of
-mounting the respective routes / starting a ``grpc.aio.server`` — the
-typed construction patterns carry over unchanged.
+* Every construction call that used pb2 directly now uses
+  ``a2a_pydantic.v10`` Pydantic models (autocomplete, type checking,
+  Pydantic validation at construction time).
+* Every HTTP endpoint is a real ``@app.post`` / ``@app.get`` decorator
+  with typed request and response models, so they show up in
+  ``/docs`` with full schema, request validation, and response
+  serialization via Pydantic.
+* At the SDK boundary we flip to pb2 via :func:`convert_to_proto`,
+  call ``DefaultRequestHandler.on_message_send`` / ``on_get_task`` /
+  ``on_cancel_task``, and flip back to v10 via
+  :func:`convert_from_proto`.
 
-What you gain:
-
-* autocomplete for every field on ``AgentCard``, ``AgentSkill``,
-  ``AgentInterface``, ``Part``, ``Message``, ``AgentCapabilities``, ...
-* ``pyright`` / ``mypy`` catches typos and missing-required-field errors
-  before runtime
-* Pydantic validates values at construction time (wrong enum value →
-  ``ValidationError`` immediately, not a silent pb2 default)
-* ``convert_to_proto`` is ``@overload``-typed, so the result of
-  ``convert_to_proto(v10.AgentCard)`` is inferred as ``pb2.AgentCard``
-
-What stays the same:
-
-* The ``AgentExecutor`` subclass structure, ``TaskUpdater`` usage, and
-  REST route wiring all come from ``a2a-sdk`` as-is
-* The agent's behavior is byte-identical to the reference — same
-  greeting logic, same artifact shape, same lifecycle events
+The result: typed-in, typed-out, with the SDK doing all the actual
+work underneath. The SDK's own framework-agnostic ``create_rest_routes``
+is intentionally NOT used here — we re-expose the subset of endpoints
+we care about as first-class FastAPI routes so ``/docs`` works.
 
 Install & run (from the repo root, with the venv active)::
 
     uv pip install -e ".[example]"
     python examples/a2a_10_proto_typed.py
 
-Requires ``a2a-sdk>=1.0.0a1`` (earlier alphas used a different API
-surface that no longer exists).
+Then open http://127.0.0.1:8000/docs and try the endpoints from
+Swagger UI. Compare with ``a2a_10_proto.py`` on the same port (after
+stopping this one) to see the empty-Swagger SDK-native version.
+
+Requires ``a2a-sdk>=1.0.0a1``.
 """
 
 from __future__ import annotations
@@ -53,17 +48,18 @@ import contextlib
 import logging
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 
 from a2a.server.agent_execution.agent_executor import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
+from a2a.server.context import ServerCallContext
 from a2a.server.events.event_queue import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.routes import create_agent_card_routes, create_rest_routes
 from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
 from a2a.server.tasks.task_updater import TaskUpdater
+from a2a.types import a2a_pb2
 
-from a2a_pydantic import convert_to_proto, v10
+from a2a_pydantic import convert_from_proto, convert_to_proto, v10
 
 logger = logging.getLogger(__name__)
 
@@ -189,15 +185,113 @@ def build_typed_agent_card(host: str, port: int) -> v10.AgentCard:
             v10.AgentInterface(
                 protocol_binding="HTTP+JSON",
                 protocol_version="1.0",
-                url=f"http://{host}:{port}/a2a/rest",
-            ),
-            v10.AgentInterface(
-                protocol_binding="HTTP+JSON",
-                protocol_version="0.3",
-                url=f"http://{host}:{port}/a2a/rest",
+                url=f"http://{host}:{port}/a2a",
             ),
         ],
     )
+
+
+def build_app(
+    agent_card: v10.AgentCard,
+    request_handler: DefaultRequestHandler,
+) -> FastAPI:
+    """Wire the typed facade endpoints on top of ``DefaultRequestHandler``.
+
+    Every endpoint:
+
+    1. accepts a typed ``v10.*`` request body (FastAPI validates via Pydantic
+       before our code runs),
+    2. bridges to pb2 via :func:`convert_to_proto`,
+    3. calls the matching ``on_*`` method on the SDK request handler,
+    4. bridges the pb2 result back to a typed ``v10.*`` via
+       :func:`convert_from_proto`,
+    5. returns the typed model — FastAPI re-serializes it via Pydantic.
+
+    The ``response_model=`` kwarg on each route is what makes Swagger /
+    ``/docs`` show the full request + response schema.
+    """
+    app = FastAPI(
+        title="Sample Agent (typed facade)",
+        description=(
+            "A2A v1.0 sample agent with typed Pydantic request and response "
+            "bodies, backed by a2a-sdk's DefaultRequestHandler underneath."
+        ),
+        version="1.0.0",
+    )
+
+    def get_handler() -> DefaultRequestHandler:
+        return request_handler
+
+    def get_call_context() -> ServerCallContext:
+        return ServerCallContext()
+
+    @app.get(
+        "/.well-known/agent-card.json",
+        response_model=v10.AgentCard,
+        summary="Get the agent's public card",
+    )
+    def get_agent_card() -> v10.AgentCard:
+        return agent_card
+
+    @app.post(
+        "/a2a/message:send",
+        response_model=v10.SendMessageResponse,
+        summary="Send a message to the agent",
+    )
+    async def send_message(
+        request: v10.SendMessageRequest,
+        handler: DefaultRequestHandler = Depends(get_handler),
+        ctx: ServerCallContext = Depends(get_call_context),
+    ) -> v10.SendMessageResponse:
+        pb_req = convert_to_proto(request)
+        result = await handler.on_message_send(pb_req, ctx)
+        if isinstance(result, a2a_pb2.Task):
+            return v10.SendMessageResponse(task=convert_from_proto(result))
+        if isinstance(result, a2a_pb2.Message):
+            return v10.SendMessageResponse(message=convert_from_proto(result))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected on_message_send result type: {type(result).__name__}",
+        )
+
+    @app.get(
+        "/a2a/tasks/{task_id}",
+        response_model=v10.Task,
+        summary="Get a task by id",
+        responses={404: {"description": "Task not found"}},
+    )
+    async def get_task(
+        task_id: str,
+        history_length: int | None = None,
+        handler: DefaultRequestHandler = Depends(get_handler),
+        ctx: ServerCallContext = Depends(get_call_context),
+    ) -> v10.Task:
+        typed_req = v10.GetTaskRequest(id=task_id, history_length=history_length)
+        pb_req = convert_to_proto(typed_req)
+        result = await handler.on_get_task(pb_req, ctx)
+        if result is None:
+            raise HTTPException(status_code=404, detail=f"Task {task_id!r} not found")
+        return convert_from_proto(result)
+
+    @app.post(
+        "/a2a/tasks/{task_id}:cancel",
+        response_model=v10.Task,
+        summary="Cancel a task",
+        responses={404: {"description": "Task not found"}},
+    )
+    async def cancel_task(
+        task_id: str,
+        handler: DefaultRequestHandler = Depends(get_handler),
+        ctx: ServerCallContext = Depends(get_call_context),
+    ) -> v10.Task:
+        typed_req = v10.CancelTaskRequest(id=task_id)
+        pb_req = convert_to_proto(typed_req)
+        result = await handler.on_cancel_task(pb_req, ctx)
+        if result is None:
+            raise HTTPException(status_code=404, detail=f"Task {task_id!r} not found")
+        return convert_from_proto(result)
+
+    return app
 
 
 async def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
@@ -212,23 +306,14 @@ async def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
         agent_card=pb_card,
     )
 
-    rest_routes = create_rest_routes(
-        request_handler=request_handler,
-        path_prefix="/a2a/rest",
-        enable_v0_3_compat=True,
-    )
-    agent_card_routes = create_agent_card_routes(agent_card=pb_card)
-
-    app = FastAPI(title="Sample Agent (typed, REST only)")
-    app.routes.extend(agent_card_routes)
-    app.routes.extend(rest_routes)
+    app = build_app(typed_card, request_handler)
 
     config = uvicorn.Config(app, host=host, port=port)
     uvicorn_server = uvicorn.Server(config)
 
     logger.info("Starting typed Sample Agent on http://%s:%s", host, port)
     logger.info(
-        "Agent Card available at http://%s:%s/.well-known/agent-card.json",
+        "OpenAPI / Swagger UI at http://%s:%s/docs",
         host,
         port,
     )
