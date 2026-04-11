@@ -1,8 +1,15 @@
 # a2a-pydantic
 
 Pydantic models for the [A2A protocol](https://a2a-protocol.org/), covering
-both **v0.3** and **v1.0** in a single package — plus a downward converter
-that lets a v1.0 server still speak to v0.3 clients.
+both **v0.3** and **v1.0** in a single package, plus two typed bridges:
+
+- a **v1.0 → v0.3 downward converter** so a v1.0 server can still speak
+  to v0.3 clients
+- a **v1.0 ↔ a2a-sdk protobuf bridge** so you can put typed Pydantic
+  request and response models in front of the SDK's
+  `DefaultRequestHandler` and get a real FastAPI `/docs` page with full
+  schemas instead of the SDK's framework-agnostic Starlette routes that
+  don't render in OpenAPI
 
 ## Why this package
 
@@ -41,19 +48,19 @@ Two optional extras are available:
 
 | Extra | Pulls in | For |
 |---|---|---|
-| `[proto]` | `a2a-sdk>=1.0.0a0` | `convert_to_proto` (v1.0 → pb2 bridge) |
+| `[proto]` | `a2a-sdk>=1.0.0a1` | `convert_to_proto` / `convert_from_proto` (v1.0 ↔ pb2 bridge) |
 | `[example]` | `a2a-sdk[http-server]`, `fastapi`, `uvicorn`, `sse-starlette` | Running the example apps in `examples/` |
 
 ```bash
-pip install a2a-pydantic[proto]       # + a2a-sdk for convert_to_proto
+pip install a2a-pydantic[proto]       # + a2a-sdk for convert_to_proto / convert_from_proto
 pip install a2a-pydantic[example]     # + full stack for the example servers
 ```
 
-Without any extra, `convert_to_proto` is still importable (via PEP 562
-lazy attribute loading) but raises a clear `ImportError` when you call
-it, pointing at the `[proto]` install command. The `[example]` extra is
-only needed if you actually want to run
-[examples/fastapi_version_header.py](examples/fastapi_version_header.py)
+Without any extra, `convert_to_proto` and `convert_from_proto` are both
+still importable (via PEP 562 lazy attribute loading) but raise a clear
+`ImportError` when you call them, pointing at the `[proto]` install
+command. The `[example]` extra is only needed if you actually want to
+run [examples/fastapi_version_header.py](examples/fastapi_version_header.py)
 or
 [examples/a2a_10_proto_typed.py](examples/a2a_10_proto_typed.py).
 
@@ -178,7 +185,7 @@ defaults for them would silently corrupt data.
 ## Bridging v1.0 → a2a-sdk protobuf
 
 `convert_to_proto` is the v1.0 → pb2 counterpart to `convert_to_v03`.
-Requires `pip install a2a-pydantic[proto]` which pulls in `a2a-sdk>=1.0.0a0`
+Requires `pip install a2a-pydantic[proto]` which pulls in `a2a-sdk>=1.0.0a1`
 for the `a2a_pb2` module. Dispatches on the input type, returns the
 matching pb2 `Message` instance, typed via `@overload` so the editor
 knows `convert_to_proto(v10.SendMessageRequest)` returns
@@ -248,6 +255,48 @@ in `a2a.types.a2a_pb2` — 34 types in total:
 `Value` fields via `struct_pb2.Value`, `Timestamp` via
 `timestamp_pb2.Timestamp`, and `Part.raw` is base64-decoded to pb2's
 `bytes` field.
+
+## Bridging a2a-sdk protobuf → v1.0
+
+`convert_from_proto` is the reverse direction — pb2 back to typed
+Pydantic v1.0 — and completes the round-trip. Same `[proto]` extra,
+same `@singledispatch + @overload` architecture, same 34 types.
+
+```python
+from a2a_pydantic import convert_from_proto, convert_to_proto, v10
+from a2a.types import a2a_pb2
+
+# Forward: v10 -> pb2 -> wire
+req = v10.SendMessageRequest(
+    message=v10.Message(
+        message_id="m-1",
+        role=v10.Role.role_user,
+        parts=[v10.Part(text="hello")],
+    ),
+)
+pb_req = convert_to_proto(req)
+wire = pb_req.SerializeToString()
+
+# Reverse: wire -> pb2 -> v10
+pb_req2 = a2a_pb2.SendMessageRequest()
+pb_req2.ParseFromString(wire)
+typed_req = convert_from_proto(pb_req2)        # -> v10.SendMessageRequest
+assert typed_req.message.parts[0].text == "hello"
+```
+
+The main use case: you call a SDK request handler that returns pb2
+(`handler.on_message_send(pb_req, ctx)` → `pb2.Task | pb2.Message`),
+and you want to serialize the result as a typed v1.0 model in a
+FastAPI endpoint. `convert_from_proto` closes that loop. See the
+**typed FastAPI facade** example below for the full pattern.
+
+**Known limitation — `Struct` metadata:** the generated v10 `Struct`
+model is an empty-schema stub with no extra-field support, so pb2
+`metadata` / `Struct` payloads cannot round-trip faithfully — the
+key/value pairs are dropped and you get back an empty `v10.Struct()`
+instance. This is symmetric in both directions (`convert_to_proto`
+has the same limitation on the forward path). Fix would require
+changing the v10 codegen to allow extras on `Struct`.
 
 ## FastAPI: version-header routing
 
@@ -322,35 +371,89 @@ Response:
 }
 ```
 
-## Sample agent: SDK-native vs. typed
+## Sample agent: SDK-native vs. typed facade
 
 A side-by-side pair of minimal A2A sample agents showing what you get
 with and without `a2a-pydantic`:
 
-- [examples/a2a_10_proto.py](examples/a2a_10_proto.py) — the **SDK-native
-  way**. Builds `AgentCard`, `AgentSkill`, `Part` etc. directly from
-  `a2a.types` (pb2 classes). Works, but every field access is unchecked:
-  no autocomplete, no type errors, no validation, typos silently
-  dropped by pb2.
-- [examples/a2a_10_proto_typed.py](examples/a2a_10_proto_typed.py) — the
-  **typed way**. Same agent, same behavior, but built as
-  `a2a_pydantic.v10` Pydantic models with `convert_to_proto` at the SDK
-  boundary. Full IDE autocomplete, `pyright` / `mypy` coverage, Pydantic
-  validation at construction time.
+### [examples/a2a_10_proto.py](examples/a2a_10_proto.py) — the SDK-native way
 
-Both files are REST-only (no JSON-RPC, no gRPC) so the comparison stays
-focused on the typing story — the delta between them is the thing
-worth seeing. Both run against `a2a-sdk>=1.0.0a1`:
+Builds `AgentCard`, `AgentSkill`, `Part` etc. directly from `a2a.types`
+(pb2 classes) and mounts the SDK's `create_rest_routes` into a FastAPI
+app. Works, but:
+
+- ❌ **No autocomplete** — `a2a_pb2.AgentCard` has no `__init__` type
+  hints for the IDE
+- ❌ **No type checking** — a typo'd field name is silently dropped by
+  pb2 at runtime
+- ❌ **No validation** — wrong enum values surface as silent defaults
+- ❌ **Empty `/docs`** — `create_rest_routes` returns
+  `starlette.routing.Route` instances, which FastAPI's OpenAPI
+  generator can't see. Swagger UI says "No operations defined in
+  spec!" even though the routes work.
+
+### [examples/a2a_10_proto_typed.py](examples/a2a_10_proto_typed.py) — the typed facade
+
+Builds the same agent, runs the same `DefaultRequestHandler`
+underneath, but everything is Pydantic on the outside:
+
+- ✅ **Typed construction** — `v10.AgentCard(...)` with full IDE
+  autocomplete, pyright/mypy coverage, Pydantic validation
+- ✅ **Typed endpoints** — real `@app.post` / `@app.get` FastAPI
+  decorators with `response_model=v10.Task` etc., so the routes show
+  up in `/docs` with full request **and** response schemas
+- ✅ **422 before the handler** — FastAPI/Pydantic rejects invalid
+  requests with a detailed error message before the SDK sees them
+- ✅ **Typed-in, typed-out** — request body parsed as v10 Pydantic,
+  `convert_to_proto` at the SDK boundary, handler returns pb2,
+  `convert_from_proto` on the way back, FastAPI serializes the v10
+  response via Pydantic
+
+The facade exposes three endpoints (plus the agent card):
+
+| Route | Request | Response |
+|---|---|---|
+| `GET  /.well-known/agent-card.json` | – | `v10.AgentCard` |
+| `POST /a2a/message:send` | `v10.SendMessageRequest` | `v10.SendMessageResponse` |
+| `GET  /a2a/tasks/{task_id}` | path param | `v10.Task` |
+| `POST /a2a/tasks/{task_id}:cancel` | path param | `v10.Task` |
+
+Core of the pattern:
+
+```python
+from a2a_pydantic import convert_from_proto, convert_to_proto, v10
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.context import ServerCallContext
+from a2a.types import a2a_pb2
+from fastapi import FastAPI, HTTPException
+
+app = FastAPI()
+
+@app.post("/a2a/message:send", response_model=v10.SendMessageResponse)
+async def send_message(
+    request: v10.SendMessageRequest,
+) -> v10.SendMessageResponse:
+    pb_req = convert_to_proto(request)
+    result = await handler.on_message_send(pb_req, ServerCallContext())
+    if isinstance(result, a2a_pb2.Task):
+        return v10.SendMessageResponse(task=convert_from_proto(result))
+    if isinstance(result, a2a_pb2.Message):
+        return v10.SendMessageResponse(message=convert_from_proto(result))
+    raise HTTPException(500, "unexpected handler result type")
+```
+
+### Running the comparison
+
+Both run against `a2a-sdk>=1.0.0a1` on port 8000:
 
 ```bash
 uv pip install -e ".[example]"
-python examples/a2a_10_proto.py          # SDK-native
-python examples/a2a_10_proto_typed.py    # typed
+python examples/a2a_10_proto.py          # SDK-native (empty /docs)
+python examples/a2a_10_proto_typed.py    # typed facade (full /docs)
 ```
 
-Either version exposes the agent at `http://127.0.0.1:8000` with the
-card at `/.well-known/agent-card.json` and the REST routes under
-`/a2a/rest/v1/`.
+Stop one before starting the other — they share the port. Visit
+`http://127.0.0.1:8000/docs` for each and see the difference.
 
 ## Project layout
 
@@ -359,6 +462,7 @@ src/a2a_pydantic/
 ├── base.py              # A2ABaseModel: shared config + camelCase aliases
 ├── converters.py        # v1.0 -> v0.3 converter (SDK-free)
 ├── to_proto.py          # v1.0 -> a2a-sdk pb2 bridge (requires [proto] extra)
+├── from_proto.py        # a2a-sdk pb2 -> v1.0 bridge (requires [proto] extra)
 ├── v03/
 │   └── models.py        # v0.3 models (A2A JSON Schema)
 └── v10/
