@@ -29,8 +29,6 @@ import contextlib
 import logging
 
 import uvicorn
-from fastapi import FastAPI
-
 from a2a.server.agent_execution.agent_executor import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
 from a2a.server.events.event_queue import EventQueue
@@ -46,7 +44,7 @@ from a2a.types import (
     AgentSkill,
     Part,
 )
-
+from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +55,7 @@ class SampleAgentExecutor(AgentExecutor):
     def __init__(self) -> None:
         self.running_tasks: set[str] = set()
 
-    async def cancel(
-        self, context: RequestContext, event_queue: EventQueue
-    ) -> None:
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Cancels a task."""
         task_id = context.task_id
         if task_id in self.running_tasks:
@@ -67,14 +63,12 @@ class SampleAgentExecutor(AgentExecutor):
 
         updater = TaskUpdater(
             event_queue=event_queue,
-            task_id=task_id or '',
-            context_id=context.context_id or '',
+            task_id=task_id or "",
+            context_id=context.context_id or "",
         )
         await updater.cancel()
 
-    async def execute(
-        self, context: RequestContext, event_queue: EventQueue
-    ) -> None:
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Executes a task inline."""
         user_message = context.message
         task_id = context.task_id
@@ -86,7 +80,7 @@ class SampleAgentExecutor(AgentExecutor):
         self.running_tasks.add(task_id)
 
         logger.info(
-            '[SampleAgentExecutor] Processing message %s for task %s (context: %s)',
+            "[SampleAgentExecutor] Processing message %s for task %s (context: %s)",
             user_message.message_id,
             task_id,
             context_id,
@@ -99,7 +93,7 @@ class SampleAgentExecutor(AgentExecutor):
         )
 
         working_message = updater.new_agent_message(
-            parts=[Part(text='Processing your question...')]
+            parts=[Part(text="Processing your question...")]
         )
         await updater.start_work(message=working_message)
 
@@ -113,67 +107,61 @@ class SampleAgentExecutor(AgentExecutor):
 
         await updater.add_artifact(
             parts=[Part(text=agent_reply_text)],
-            name='response',
+            name="response",
             last_chunk=True,
         )
         await updater.complete()
 
         logger.info(
-            '[SampleAgentExecutor] Task %s finished with state: completed',
+            "[SampleAgentExecutor] Task %s finished with state: completed",
             task_id,
         )
 
     def _parse_input(self, query: str) -> str:
         if not query:
-            return 'Hello! Please provide a message for me to respond to.'
+            return "Hello! Please provide a message for me to respond to."
 
         ql = query.lower()
-        if 'hello' in ql or 'hi' in ql:
-            return 'Hello World! Nice to meet you!'
-        if 'how are you' in ql:
-            return (
-                "I'm doing great! Thanks for asking. How can I help you today?"
-            )
-        if 'goodbye' in ql or 'bye' in ql:
-            return 'Goodbye! Have a wonderful day!'
+        if "hello" in ql or "hi" in ql:
+            return "Hello World! Nice to meet you!"
+        if "how are you" in ql:
+            return "I'm doing great! Thanks for asking. How can I help you today?"
+        if "goodbye" in ql or "bye" in ql:
+            return "Goodbye! Have a wonderful day!"
         return f"Hello World! You said: '{query}'. Thanks for your message!"
 
 
-async def serve(host: str = '127.0.0.1', port: int = 8000) -> None:
+async def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
     """Run the Sample Agent server on HTTP+JSON REST only."""
     agent_card = AgentCard(
-        name='Sample Agent',
-        description='A sample agent to test the stream functionality.',
-        provider=AgentProvider(
-            organization='A2A Samples', url='https://example.com'
-        ),
-        version='1.0.0',
-        capabilities=AgentCapabilities(
-            streaming=True, push_notifications=False
-        ),
-        default_input_modes=['text'],
-        default_output_modes=['text', 'task-status'],
+        name="Sample Agent",
+        description="A sample agent to test the stream functionality.",
+        provider=AgentProvider(organization="A2A Samples", url="https://example.com"),
+        version="1.0.0",
+        capabilities=AgentCapabilities(streaming=True, push_notifications=False),
+        default_input_modes=["text"],
+        default_output_modes=["text", "task-status"],
         skills=[
             AgentSkill(
-                id='sample_agent',
-                name='Sample Agent',
-                description='Say hi.',
-                tags=['sample'],
-                examples=['hi'],
-                input_modes=['text'],
-                output_modes=['text', 'task-status'],
+                id="sample_agent",
+                name="Sample Agent",
+                description="Say hi.",
+                tags=["sample"],
+                examples=["hi"],
+                input_modes=["text"],
+                output_modes=["text", "task-status"],
             )
         ],
         supported_interfaces=[
             AgentInterface(
-                protocol_binding='HTTP+JSON',
-                protocol_version='1.0',
-                url=f'http://{host}:{port}/a2a/rest',
+                protocol_binding="HTTP+JSON",
+                protocol_version="1.0",
+                url=f"http://{host}:{port}/a2a/rest",
             ),
             AgentInterface(
-                protocol_binding='HTTP+JSON',
-                protocol_version='0.3',
-                url=f'http://{host}:{port}/a2a/rest',
+                protocol_binding="HTTP+JSON",
+                protocol_version="0.3",
+                url=f"http://{host}:{port}/a2a/rest",
             ),
         ],
     )
@@ -187,7 +175,7 @@ async def serve(host: str = '127.0.0.1', port: int = 8000) -> None:
 
     rest_routes = create_rest_routes(
         request_handler=request_handler,
-        path_prefix='/a2a/rest',
+        path_prefix="/a2a/rest",
         enable_v0_3_compat=True,
     )
     agent_card_routes = create_agent_card_routes(agent_card=agent_card)
@@ -199,9 +187,9 @@ async def serve(host: str = '127.0.0.1', port: int = 8000) -> None:
     config = uvicorn.Config(app, host=host, port=port)
     uvicorn_server = uvicorn.Server(config)
 
-    logger.info('Starting Sample Agent on http://%s:%s', host, port)
+    logger.info("Starting Sample Agent on http://%s:%s", host, port)
     logger.info(
-        'Agent Card available at http://%s:%s/.well-known/agent-card.json',
+        "Agent Card available at http://%s:%s/.well-known/agent-card.json",
         host,
         port,
     )
@@ -209,7 +197,7 @@ async def serve(host: str = '127.0.0.1', port: int = 8000) -> None:
     await uvicorn_server.serve()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(serve())

@@ -61,9 +61,7 @@ def _pb_value_to_any(v: struct_pb2.Value) -> Any:
     if kind == "bool_value":
         return v.bool_value
     if kind == "struct_value":
-        return {
-            k: _pb_value_to_any(val) for k, val in v.struct_value.fields.items()
-        }
+        return {k: _pb_value_to_any(val) for k, val in v.struct_value.fields.items()}
     if kind == "list_value":
         return [_pb_value_to_any(item) for item in v.list_value.values]
     return None
@@ -99,9 +97,7 @@ def _pb_timestamp_to_v10(
         return None
     if ts.seconds == 0 and ts.nanos == 0:
         return None
-    return v10.Timestamp(
-        root=ts.ToDatetime(tzinfo=datetime.timezone.utc)
-    )
+    return v10.Timestamp(root=ts.ToDatetime(tzinfo=datetime.UTC))
 
 
 _PROTO_TO_ROLE: dict[int, v10.Role] = {
@@ -126,9 +122,7 @@ def _role_from_proto(role_int: int) -> v10.Role:
 
 
 def _task_state_from_proto(state_int: int) -> v10.TaskState:
-    return _PROTO_TO_TASK_STATE.get(
-        state_int, v10.TaskState.task_state_submitted
-    )
+    return _PROTO_TO_TASK_STATE.get(state_int, v10.TaskState.task_state_submitted)
 
 
 def _from_pb_part(p: pb2.Part) -> v10.Part:
@@ -167,9 +161,7 @@ def _from_pb_message(m: pb2.Message) -> v10.Message:
         parts=[_from_pb_part(p) for p in m.parts],
         metadata=_pb_struct_to_v10(m.metadata),
         extensions=list(m.extensions) if m.extensions else None,
-        reference_task_ids=(
-            list(m.reference_task_ids) if m.reference_task_ids else None
-        ),
+        reference_task_ids=(list(m.reference_task_ids) if m.reference_task_ids else None),
     )
 
 
@@ -188,9 +180,7 @@ def _from_pb_task_status(s: pb2.TaskStatus) -> v10.TaskStatus:
     return v10.TaskStatus(
         state=_task_state_from_proto(s.state),
         message=_from_pb_message(s.message) if s.HasField("message") else None,
-        timestamp=_pb_timestamp_to_v10(s.timestamp)
-        if s.HasField("timestamp")
-        else None,
+        timestamp=_pb_timestamp_to_v10(s.timestamp) if s.HasField("timestamp") else None,
     )
 
 
@@ -321,15 +311,9 @@ def _from_pb_agent_capabilities(
 ) -> v10.AgentCapabilities:
     return v10.AgentCapabilities(
         streaming=c.streaming if c.HasField("streaming") else None,
-        push_notifications=c.push_notifications
-        if c.HasField("push_notifications")
-        else None,
-        extensions=[_from_pb_agent_extension(e) for e in c.extensions]
-        if c.extensions
-        else None,
-        extended_agent_card=c.extended_agent_card
-        if c.HasField("extended_agent_card")
-        else None,
+        push_notifications=c.push_notifications if c.HasField("push_notifications") else None,
+        extensions=[_from_pb_agent_extension(e) for e in c.extensions] if c.extensions else None,
+        extended_agent_card=c.extended_agent_card if c.HasField("extended_agent_card") else None,
     )
 
 
@@ -358,9 +342,7 @@ def _from_pb_security_requirement(
     r: pb2.SecurityRequirement,
 ) -> v10.SecurityRequirement:
     return v10.SecurityRequirement(
-        schemes={
-            name: _from_pb_string_list(sl) for name, sl in r.schemes.items()
-        }
+        schemes={name: _from_pb_string_list(sl) for name, sl in r.schemes.items()}
     )
 
 
@@ -463,9 +445,7 @@ def _from_pb_oauth_flows(f: pb2.OAuthFlows) -> v10.OAuthFlows:
         else None,
         implicit=_from_pb_implicit_flow(f.implicit) if flow == "implicit" else None,
         password=_from_pb_password_flow(f.password) if flow == "password" else None,
-        device_code=_from_pb_device_code_flow(f.device_code)
-        if flow == "device_code"
-        else None,
+        device_code=_from_pb_device_code_flow(f.device_code) if flow == "device_code" else None,
     )
 
 
@@ -487,17 +467,13 @@ def _from_pb_security_scheme(
         api_key_security_scheme=_from_pb_api_key_scheme(s.api_key_security_scheme)
         if scheme == "api_key_security_scheme"
         else None,
-        http_auth_security_scheme=_from_pb_http_auth_scheme(
-            s.http_auth_security_scheme
-        )
+        http_auth_security_scheme=_from_pb_http_auth_scheme(s.http_auth_security_scheme)
         if scheme == "http_auth_security_scheme"
         else None,
         oauth2_security_scheme=_from_pb_oauth2_scheme(s.oauth2_security_scheme)
         if scheme == "oauth2_security_scheme"
         else None,
-        open_id_connect_security_scheme=_from_pb_openid_scheme(
-            s.open_id_connect_security_scheme
-        )
+        open_id_connect_security_scheme=_from_pb_openid_scheme(s.open_id_connect_security_scheme)
         if scheme == "open_id_connect_security_scheme"
         else None,
         mtls_security_scheme=_from_pb_mtls_scheme(s.mtls_security_scheme)
@@ -515,9 +491,7 @@ def _from_pb_agent_skill(s: pb2.AgentSkill) -> v10.AgentSkill:
         examples=list(s.examples) if s.examples else None,
         input_modes=list(s.input_modes) if s.input_modes else None,
         output_modes=list(s.output_modes) if s.output_modes else None,
-        security_requirements=[
-            _from_pb_security_requirement(r) for r in s.security_requirements
-        ]
+        security_requirements=[_from_pb_security_requirement(r) for r in s.security_requirements]
         if s.security_requirements
         else None,
     )
@@ -537,26 +511,17 @@ def _from_pb_agent_card(c: pb2.AgentCard) -> v10.AgentCard:
     return v10.AgentCard(
         name=c.name,
         description=c.description,
-        supported_interfaces=[
-            _from_pb_agent_interface(i) for i in c.supported_interfaces
-        ],
-        provider=_from_pb_agent_provider(c.provider)
-        if c.HasField("provider")
-        else None,
+        supported_interfaces=[_from_pb_agent_interface(i) for i in c.supported_interfaces],
+        provider=_from_pb_agent_provider(c.provider) if c.HasField("provider") else None,
         version=c.version,
-        documentation_url=c.documentation_url
-        if c.HasField("documentation_url")
-        else None,
+        documentation_url=c.documentation_url if c.HasField("documentation_url") else None,
         capabilities=_from_pb_agent_capabilities(c.capabilities),
         security_schemes={
-            name: _from_pb_security_scheme(scheme)
-            for name, scheme in c.security_schemes.items()
+            name: _from_pb_security_scheme(scheme) for name, scheme in c.security_schemes.items()
         }
         if c.security_schemes
         else None,
-        security_requirements=[
-            _from_pb_security_requirement(r) for r in c.security_requirements
-        ]
+        security_requirements=[_from_pb_security_requirement(r) for r in c.security_requirements]
         if c.security_requirements
         else None,
         default_input_modes=list(c.default_input_modes),
@@ -590,9 +555,7 @@ def _from_pb_list_tasks_request(
         status_timestamp_after=_pb_timestamp_to_v10(r.status_timestamp_after)
         if r.HasField("status_timestamp_after")
         else None,
-        include_artifacts=r.include_artifacts
-        if r.HasField("include_artifacts")
-        else None,
+        include_artifacts=r.include_artifacts if r.HasField("include_artifacts") else None,
     )
 
 
@@ -728,15 +691,23 @@ def convert_from_proto(obj: pb2.ListTasksResponse) -> v10.ListTasksResponse: ...
 @overload
 def convert_from_proto(obj: pb2.CancelTaskRequest) -> v10.CancelTaskRequest: ...
 @overload
-def convert_from_proto(obj: pb2.GetTaskPushNotificationConfigRequest) -> v10.GetTaskPushNotificationConfigRequest: ...
+def convert_from_proto(
+    obj: pb2.GetTaskPushNotificationConfigRequest,
+) -> v10.GetTaskPushNotificationConfigRequest: ...
 @overload
-def convert_from_proto(obj: pb2.DeleteTaskPushNotificationConfigRequest) -> v10.DeleteTaskPushNotificationConfigRequest: ...
+def convert_from_proto(
+    obj: pb2.DeleteTaskPushNotificationConfigRequest,
+) -> v10.DeleteTaskPushNotificationConfigRequest: ...
 @overload
 def convert_from_proto(obj: pb2.SubscribeToTaskRequest) -> v10.SubscribeToTaskRequest: ...
 @overload
-def convert_from_proto(obj: pb2.ListTaskPushNotificationConfigsRequest) -> v10.ListTaskPushNotificationConfigsRequest: ...
+def convert_from_proto(
+    obj: pb2.ListTaskPushNotificationConfigsRequest,
+) -> v10.ListTaskPushNotificationConfigsRequest: ...
 @overload
-def convert_from_proto(obj: pb2.ListTaskPushNotificationConfigsResponse) -> v10.ListTaskPushNotificationConfigsResponse: ...
+def convert_from_proto(
+    obj: pb2.ListTaskPushNotificationConfigsResponse,
+) -> v10.ListTaskPushNotificationConfigsResponse: ...
 @overload
 def convert_from_proto(obj: pb2.GetExtendedAgentCardRequest) -> v10.GetExtendedAgentCardRequest: ...
 @singledispatch
@@ -787,4 +758,4 @@ for _pb_type, _fn in {
     pb2.ListTaskPushNotificationConfigsResponse: _from_pb_list_task_push_notification_configs_response,
     pb2.GetExtendedAgentCardRequest: _from_pb_get_extended_agent_card_request,
 }.items():
-    convert_from_proto.register(_pb_type)(_fn)
+    convert_from_proto.register(_pb_type)(_fn)  # type: ignore[attr-defined]

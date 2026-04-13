@@ -55,7 +55,7 @@ def _struct_to_dict(struct: v10.Struct | None) -> dict[str, Any] | None:
     if isinstance(struct, BaseModel):
         data = struct.model_dump(by_alias=False, exclude_none=True)
     else:
-        data = dict(struct)  # type: ignore[arg-type]
+        data = dict(struct)
     return data or None
 
 
@@ -113,9 +113,7 @@ def _part(p: v10.Part) -> v03.Part:
     """
     metadata = _struct_to_dict(p.metadata)
 
-    populated = [
-        name for name in ("text", "raw", "url", "data") if getattr(p, name) is not None
-    ]
+    populated = [name for name in ("text", "raw", "url", "data") if getattr(p, name) is not None]
     if not populated:
         _warn("v10.Part has no payload set; emitting empty v03.TextPart")
         return v03.Part(root=v03.TextPart(text="", metadata=metadata))
@@ -130,20 +128,20 @@ def _part(p: v10.Part) -> v03.Part:
         return v03.Part(root=v03.TextPart(text=p.text or "", metadata=metadata))
 
     if chosen == "raw":
-        file_model = v03.FileWithBytes(
+        bytes_file = v03.FileWithBytes(
             bytes=p.raw or "",
             mime_type=p.media_type or None,
             name=p.filename or None,
         )
-        return v03.Part(root=v03.FilePart(file=file_model, metadata=metadata))
+        return v03.Part(root=v03.FilePart(file=bytes_file, metadata=metadata))
 
     if chosen == "url":
-        file_model = v03.FileWithUri(
+        uri_file = v03.FileWithUri(
             uri=p.url or "",
             mime_type=p.media_type or None,
             name=p.filename or None,
         )
-        return v03.Part(root=v03.FilePart(file=file_model, metadata=metadata))
+        return v03.Part(root=v03.FilePart(file=uri_file, metadata=metadata))
 
     raw_value = _value_to_any(p.data)
     if not isinstance(raw_value, dict):
@@ -162,9 +160,7 @@ def _message(m: v10.Message) -> v03.Message:
         message_id=m.message_id,
         metadata=_struct_to_dict(m.metadata),
         parts=[_part(p) for p in m.parts],
-        reference_task_ids=(
-            list(m.reference_task_ids) if m.reference_task_ids else None
-        ),
+        reference_task_ids=(list(m.reference_task_ids) if m.reference_task_ids else None),
         role=_role(m.role),
         task_id=m.task_id or None,
     )
@@ -248,9 +244,7 @@ def _push_notification_config(
         )
     return v03.PushNotificationConfig(
         authentication=(
-            _authentication_info(c.authentication)
-            if c.authentication is not None
-            else None
+            _authentication_info(c.authentication) if c.authentication is not None else None
         ),
         id=c.id or None,
         token=c.token or None,
@@ -275,9 +269,7 @@ def _send_message_configuration(
         push_cfg = _push_notification_config(c.task_push_notification_config)
 
     return v03.MessageSendConfiguration(
-        accepted_output_modes=(
-            list(c.accepted_output_modes) if c.accepted_output_modes else None
-        ),
+        accepted_output_modes=(list(c.accepted_output_modes) if c.accepted_output_modes else None),
         blocking=(not c.return_immediately) if c.return_immediately is not None else None,
         history_length=c.history_length,
         push_notification_config=push_cfg,
@@ -292,15 +284,10 @@ def _send_message_request(r: v10.SendMessageRequest) -> v03.MessageSendParams:
     is the JSON-RPC envelope). v1.0 has no JSON-RPC envelope layer.
     """
     if r.tenant:
-        _warn(
-            f"v10.SendMessageRequest.tenant={r.tenant!r} is dropped "
-            "(v0.3 has no tenant concept)"
-        )
+        _warn(f"v10.SendMessageRequest.tenant={r.tenant!r} is dropped (v0.3 has no tenant concept)")
     return v03.MessageSendParams(
         configuration=(
-            _send_message_configuration(r.configuration)
-            if r.configuration is not None
-            else None
+            _send_message_configuration(r.configuration) if r.configuration is not None else None
         ),
         message=_message(r.message),
         metadata=_struct_to_dict(r.metadata),
@@ -323,9 +310,7 @@ def _agent_extension(e: v10.AgentExtension) -> v03.AgentExtension:
 
 def _agent_capabilities(c: v10.AgentCapabilities) -> v03.AgentCapabilities:
     return v03.AgentCapabilities(
-        extensions=(
-            [_agent_extension(x) for x in c.extensions] if c.extensions else None
-        ),
+        extensions=([_agent_extension(x) for x in c.extensions] if c.extensions else None),
         push_notifications=c.push_notifications,
         state_transition_history=None,
         streaming=c.streaming,
@@ -334,10 +319,7 @@ def _agent_capabilities(c: v10.AgentCapabilities) -> v03.AgentCapabilities:
 
 def _agent_interface(i: v10.AgentInterface) -> v03.AgentInterface:
     if i.tenant:
-        _warn(
-            f"v10.AgentInterface.tenant={i.tenant!r} is dropped "
-            "(v0.3 has no tenant concept)"
-        )
+        _warn(f"v10.AgentInterface.tenant={i.tenant!r} is dropped (v0.3 has no tenant concept)")
     if i.protocol_version and i.protocol_version != "0.3":
         _warn(
             f"v10.AgentInterface.protocol_version={i.protocol_version!r} "
@@ -425,8 +407,7 @@ def _authorization_code_flow(
 ) -> v03.AuthorizationCodeOAuthFlow:
     if f.pkce_required:
         _warn(
-            "v10.AuthorizationCodeOAuthFlow.pkce_required=True is dropped "
-            "(v0.3 has no PKCE flag)"
+            "v10.AuthorizationCodeOAuthFlow.pkce_required=True is dropped (v0.3 has no PKCE flag)"
         )
     return v03.AuthorizationCodeOAuthFlow(
         authorization_url=f.authorization_url,
@@ -464,9 +445,7 @@ def _password_flow(f: v10.PasswordOAuthFlow) -> v03.PasswordOAuthFlow:
 
 def _oauth_flows(f: v10.OAuthFlows) -> v03.OAuthFlows:
     if f.device_code is not None:
-        _warn(
-            "v10.OAuthFlows.device_code has no v0.3 equivalent and was dropped"
-        )
+        _warn("v10.OAuthFlows.device_code has no v0.3 equivalent and was dropped")
     return v03.OAuthFlows(
         authorization_code=(
             _authorization_code_flow(f.authorization_code)
@@ -519,15 +498,11 @@ def _security_scheme(s: v10.SecurityScheme) -> v03.SecurityScheme:
         candidates.append(
             (
                 "openid",
-                v03.SecurityScheme(
-                    root=_openid_scheme(s.open_id_connect_security_scheme)
-                ),
+                v03.SecurityScheme(root=_openid_scheme(s.open_id_connect_security_scheme)),
             )
         )
     if s.mtls_security_scheme is not None:
-        candidates.append(
-            ("mtls", v03.SecurityScheme(root=_mtls_scheme(s.mtls_security_scheme)))
-        )
+        candidates.append(("mtls", v03.SecurityScheme(root=_mtls_scheme(s.mtls_security_scheme))))
 
     if not candidates:
         raise ValueError(
@@ -568,9 +543,7 @@ def _agent_card(c: v10.AgentCard) -> v03.AgentCard:
         else None
     )
     if main_iface.tenant:
-        _warn(
-            f"v10.AgentCard main interface tenant={main_iface.tenant!r} dropped"
-        )
+        _warn(f"v10.AgentCard main interface tenant={main_iface.tenant!r} dropped")
     if main_iface.protocol_version and main_iface.protocol_version != "0.3":
         _warn(
             f"v10.AgentCard main interface protocol_version="
@@ -601,9 +574,7 @@ def _agent_card(c: v10.AgentCard) -> v03.AgentCard:
         provider=_agent_provider(c.provider) if c.provider is not None else None,
         security=security,
         security_schemes=security_schemes,
-        signatures=(
-            [_agent_card_signature(s) for s in c.signatures] if c.signatures else None
-        ),
+        signatures=([_agent_card_signature(s) for s in c.signatures] if c.signatures else None),
         skills=[_agent_skill(s) for s in c.skills],
         supports_authenticated_extended_card=c.capabilities.extended_agent_card,
         url=main_iface.url,
@@ -691,4 +662,4 @@ for _v10_type, _fn in {
     v10.SecurityScheme: _security_scheme,
     v10.OAuthFlows: _oauth_flows,
 }.items():
-    convert_to_v03.register(_v10_type)(_fn)
+    convert_to_v03.register(_v10_type)(_fn)  # type: ignore[attr-defined]

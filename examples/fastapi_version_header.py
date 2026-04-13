@@ -55,8 +55,7 @@ def message_send(
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Unsupported A2A-Version {version!r}. "
-                f"Supported: {sorted(SUPPORTED_VERSIONS)}"
+                f"Unsupported A2A-Version {version!r}. Supported: {sorted(SUPPORTED_VERSIONS)}"
             ),
         )
 

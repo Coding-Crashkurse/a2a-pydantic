@@ -13,8 +13,8 @@ def to_camel_custom(snake: str) -> str:
     """
     # First, remove any trailing underscores. This is common for names that
     # conflict with Python keywords, like 'in_' or 'from_'.
-    if snake.endswith('_'):
-        snake = snake.rstrip('_')
+    if snake.endswith("_"):
+        snake = snake.rstrip("_")
     return to_camel(snake)
 
 

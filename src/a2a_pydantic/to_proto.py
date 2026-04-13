@@ -115,12 +115,12 @@ def _timestamp_to_pb(
     return out
 
 
-_ROLE_TO_PROTO: dict[v10.Role, int] = {
+_ROLE_TO_PROTO: dict[v10.Role, pb2.Role] = {
     v10.Role.role_user: pb2.ROLE_USER,
     v10.Role.role_agent: pb2.ROLE_AGENT,
 }
 
-_TASK_STATE_TO_PROTO: dict[v10.TaskState, int] = {
+_TASK_STATE_TO_PROTO: dict[v10.TaskState, pb2.TaskState] = {
     v10.TaskState.task_state_submitted: pb2.TASK_STATE_SUBMITTED,
     v10.TaskState.task_state_working: pb2.TASK_STATE_WORKING,
     v10.TaskState.task_state_completed: pb2.TASK_STATE_COMPLETED,
@@ -143,9 +143,7 @@ def _decode_raw(raw: str | None) -> bytes:
 
 
 def _to_pb_part(p: v10.Part) -> pb2.Part:
-    populated = [
-        n for n in ("text", "raw", "url", "data") if getattr(p, n) is not None
-    ]
+    populated = [n for n in ("text", "raw", "url", "data") if getattr(p, n) is not None]
     if len(populated) > 1:
         _warn_multi_oneof("v10.Part", "content", populated)
     out = pb2.Part()
@@ -346,9 +344,7 @@ def _to_pb_stream_response(r: v10.StreamResponse) -> pb2.StreamResponse:
     if r.status_update is not None:
         out.status_update.CopyFrom(_to_pb_task_status_update_event(r.status_update))
     if r.artifact_update is not None:
-        out.artifact_update.CopyFrom(
-            _to_pb_task_artifact_update_event(r.artifact_update)
-        )
+        out.artifact_update.CopyFrom(_to_pb_task_artifact_update_event(r.artifact_update))
     return out
 
 
@@ -523,13 +519,9 @@ def _to_pb_oauth_flows(f: v10.OAuthFlows) -> pb2.OAuthFlows:
         _warn_multi_oneof("v10.OAuthFlows", "flow", populated)
     out = pb2.OAuthFlows()
     if f.authorization_code is not None:
-        out.authorization_code.CopyFrom(
-            _to_pb_authorization_code_flow(f.authorization_code)
-        )
+        out.authorization_code.CopyFrom(_to_pb_authorization_code_flow(f.authorization_code))
     if f.client_credentials is not None:
-        out.client_credentials.CopyFrom(
-            _to_pb_client_credentials_flow(f.client_credentials)
-        )
+        out.client_credentials.CopyFrom(_to_pb_client_credentials_flow(f.client_credentials))
     if f.implicit is not None:
         out.implicit.CopyFrom(_to_pb_implicit_flow(f.implicit))
     if f.password is not None:
@@ -574,25 +566,17 @@ def _to_pb_security_scheme(
         _warn_multi_oneof("v10.SecurityScheme", "scheme", populated)
     out = pb2.SecurityScheme()
     if s.api_key_security_scheme is not None:
-        out.api_key_security_scheme.CopyFrom(
-            _to_pb_api_key_scheme(s.api_key_security_scheme)
-        )
+        out.api_key_security_scheme.CopyFrom(_to_pb_api_key_scheme(s.api_key_security_scheme))
     if s.http_auth_security_scheme is not None:
-        out.http_auth_security_scheme.CopyFrom(
-            _to_pb_http_auth_scheme(s.http_auth_security_scheme)
-        )
+        out.http_auth_security_scheme.CopyFrom(_to_pb_http_auth_scheme(s.http_auth_security_scheme))
     if s.oauth2_security_scheme is not None:
-        out.oauth2_security_scheme.CopyFrom(
-            _to_pb_oauth2_scheme(s.oauth2_security_scheme)
-        )
+        out.oauth2_security_scheme.CopyFrom(_to_pb_oauth2_scheme(s.oauth2_security_scheme))
     if s.open_id_connect_security_scheme is not None:
         out.open_id_connect_security_scheme.CopyFrom(
             _to_pb_openid_scheme(s.open_id_connect_security_scheme)
         )
     if s.mtls_security_scheme is not None:
-        out.mtls_security_scheme.CopyFrom(
-            _to_pb_mtls_scheme(s.mtls_security_scheme)
-        )
+        out.mtls_security_scheme.CopyFrom(_to_pb_mtls_scheme(s.mtls_security_scheme))
     return out
 
 
@@ -827,15 +811,23 @@ def convert_to_proto(obj: v10.ListTasksResponse) -> pb2.ListTasksResponse: ...
 @overload
 def convert_to_proto(obj: v10.CancelTaskRequest) -> pb2.CancelTaskRequest: ...
 @overload
-def convert_to_proto(obj: v10.GetTaskPushNotificationConfigRequest) -> pb2.GetTaskPushNotificationConfigRequest: ...
+def convert_to_proto(
+    obj: v10.GetTaskPushNotificationConfigRequest,
+) -> pb2.GetTaskPushNotificationConfigRequest: ...
 @overload
-def convert_to_proto(obj: v10.DeleteTaskPushNotificationConfigRequest) -> pb2.DeleteTaskPushNotificationConfigRequest: ...
+def convert_to_proto(
+    obj: v10.DeleteTaskPushNotificationConfigRequest,
+) -> pb2.DeleteTaskPushNotificationConfigRequest: ...
 @overload
 def convert_to_proto(obj: v10.SubscribeToTaskRequest) -> pb2.SubscribeToTaskRequest: ...
 @overload
-def convert_to_proto(obj: v10.ListTaskPushNotificationConfigsRequest) -> pb2.ListTaskPushNotificationConfigsRequest: ...
+def convert_to_proto(
+    obj: v10.ListTaskPushNotificationConfigsRequest,
+) -> pb2.ListTaskPushNotificationConfigsRequest: ...
 @overload
-def convert_to_proto(obj: v10.ListTaskPushNotificationConfigsResponse) -> pb2.ListTaskPushNotificationConfigsResponse: ...
+def convert_to_proto(
+    obj: v10.ListTaskPushNotificationConfigsResponse,
+) -> pb2.ListTaskPushNotificationConfigsResponse: ...
 @overload
 def convert_to_proto(obj: v10.GetExtendedAgentCardRequest) -> pb2.GetExtendedAgentCardRequest: ...
 @singledispatch
@@ -888,4 +880,4 @@ for _v10_type, _fn in {
     v10.ListTaskPushNotificationConfigsResponse: _to_pb_list_task_push_notification_configs_response,
     v10.GetExtendedAgentCardRequest: _to_pb_get_extended_agent_card_request,
 }.items():
-    convert_to_proto.register(_v10_type)(_fn)
+    convert_to_proto.register(_v10_type)(_fn)  # type: ignore[attr-defined]

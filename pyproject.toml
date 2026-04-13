@@ -1,6 +1,6 @@
 [project]
 name = "a2a-pydantic"
-version = "0.1.0"
+version = "0.0.1"
 description = "Pydantic models for A2A protocol (v0.3 + v1.0)"
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2.0"]
@@ -13,6 +13,12 @@ example = [
     "uvicorn>=0.44.0",
     "sse-starlette>=3.3.4",
 ]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.8",
+    "mypy>=1.11",
+    "pre-commit>=3.7",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -20,3 +26,47 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/a2a_pydantic"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+    "scripts/resolve_refs.py",
+    "src/a2a_pydantic/v03/models.py",
+    "src/a2a_pydantic/v10/models.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = [
+    "E501",  # line length handled by formatter
+    "B008",  # FastAPI uses `Depends(...)` etc. as defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"examples/*" = ["E402"]
+"tests/*" = ["B018", "E402"]
+
+[tool.mypy]
+python_version = "3.11"
+strict_optional = true
+warn_unused_ignores = true
+check_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = [
+    "a2a_pydantic.v03.models",
+    "a2a_pydantic.v10.models",
+    "a2a.*",
+    "google.*",
+    "grpc.*",
+    "uvicorn.*",
+]
+ignore_errors = true
+ignore_missing_imports = true

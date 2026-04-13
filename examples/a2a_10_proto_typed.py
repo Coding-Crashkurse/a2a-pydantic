@@ -48,8 +48,6 @@ import contextlib
 import logging
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException
-
 from a2a.server.agent_execution.agent_executor import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
 from a2a.server.context import ServerCallContext
@@ -58,6 +56,7 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
 from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types import a2a_pb2
+from fastapi import Depends, FastAPI, HTTPException
 
 from a2a_pydantic import convert_from_proto, convert_to_proto, v10
 
@@ -70,9 +69,7 @@ class SampleAgentExecutor(AgentExecutor):
     def __init__(self) -> None:
         self.running_tasks: set[str] = set()
 
-    async def cancel(
-        self, context: RequestContext, event_queue: EventQueue
-    ) -> None:
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         task_id = context.task_id
         if task_id and task_id in self.running_tasks:
             self.running_tasks.remove(task_id)
@@ -84,9 +81,7 @@ class SampleAgentExecutor(AgentExecutor):
         )
         await updater.cancel()
 
-    async def execute(
-        self, context: RequestContext, event_queue: EventQueue
-    ) -> None:
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         user_message = context.message
         task_id = context.task_id
         context_id = context.context_id
