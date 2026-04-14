@@ -134,8 +134,25 @@ def simplify_anyof(obj):
                     obj["description"] = desc
                 if title:
                     obj["title"] = title
-                if default is not None:
-                    obj["default"] = enum_vals[0] if enum_vals else default
+                # Proto enums default to integer 0 (= UNSPECIFIED). We drop
+                # UNSPECIFIED from the Python enum because Python already has
+                # `None` for "unset", so an integer default has no valid target
+                # on our side — keep the field unset. String defaults are
+                # preserved only when they actually match one of the kept enum
+                # values; an unmappable string is almost certainly a schema
+                # drift we want to hear about, so we log it loudly instead of
+                # silently dropping (silent drops are what produced the
+                # `default: 0 -> "TASK_STATE_SUBMITTED"` bug in the first place).
+                if default is None or isinstance(default, int):
+                    pass
+                elif isinstance(default, str) and default in enum_vals:
+                    obj["default"] = default
+                else:
+                    print(
+                        f"resolve_refs: dropping unmappable enum default "
+                        f"{default!r} (kept enum values: {enum_vals})",
+                        file=sys.stderr,
+                    )
 
             elif _is_proto_int_anyof(any_of):
                 int_schema = next(
