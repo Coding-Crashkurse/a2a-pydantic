@@ -256,6 +256,10 @@ _REQUIRED_FIELDS: dict[str, list[str]] = {
     "Artifact": ["artifactId", "parts"],
     # 4.3.2
     "AuthenticationInfo": ["scheme"],
+    # 4.4.3 — spec table marks `uri` as "No" but the prose in 4.6.1/4.6.3 treats
+    # it as the unique extension identifier. v0.3 agrees and lists it required.
+    # Following the prose and v0.3 parity here.
+    "AgentExtension": ["uri"],
     # 4.5.8
     "AuthorizationCodeOAuthFlow": ["authorizationUrl", "scopes", "tokenUrl"],
     # 3.1.5
@@ -385,6 +389,23 @@ def rename_reserved_properties(schema: dict) -> None:
             body["required"] = [rename_map.get(r, r) for r in required]
 
 
+def make_struct_a_dict_wrapper(schema: dict) -> None:
+    """Turn the empty ``Struct`` stub into a proper ``dict[str, Any]`` payload.
+
+    Upstream declares ``Struct`` as ``{"type": "object"}`` with no properties.
+    datamodel-codegen turns that into an empty ``class Struct(A2ABaseModel)``
+    that silently drops every key/value pair assigned to it — which made
+    ``metadata`` / ``params`` / ``header`` round-trips lossy on both the v0.3
+    and pb2 bridges. Adding ``additionalProperties: True`` makes the generator
+    emit ``Struct`` as ``RootModel[dict[str, Any]]`` instead, so ``metadata``
+    actually carries its payload end-to-end.
+    """
+    defs = schema.get("definitions", {})
+    struct = defs.get("Struct")
+    if isinstance(struct, dict):
+        struct["additionalProperties"] = True
+
+
 def extract_task_state(schema: dict) -> None:
     """Promote the inline TaskState enum to a shared definition so Status/State
     collapse into a single `TaskState` class in the generated models."""
@@ -447,6 +468,7 @@ def main():
     clean_descriptions(schema)
     rename_reserved_properties(schema)
     extract_task_state(schema)
+    make_struct_a_dict_wrapper(schema)
     apply_required_fields(schema)
 
     raw = json.dumps(schema)

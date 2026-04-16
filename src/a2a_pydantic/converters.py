@@ -31,8 +31,6 @@ import warnings
 from functools import singledispatch
 from typing import Any, overload
 
-from pydantic import BaseModel
-
 from a2a_pydantic import v03, v10
 
 __all__ = ["convert_to_v03"]
@@ -45,17 +43,14 @@ def _warn(message: str) -> None:
 def _struct_to_dict(struct: v10.Struct | None) -> dict[str, Any] | None:
     """Convert a v10 ``Struct`` (opaque JSON object) to a plain dict.
 
-    ``Struct`` is generated as an empty ``A2ABaseModel`` subclass, so in
-    practice only extra fields (if any were accepted) would be preserved.
-    We dump via pydantic to be safe and return ``None`` when empty so the
-    v0.3 side stays ``None`` rather than ``{}``.
+    ``Struct`` carries its payload via ``model_config.extra='allow'``;
+    ``model_dump`` returns both declared (none, here) and extra fields.
+    Empty payloads collapse to ``None`` so the v0.3 side stays ``None``
+    rather than an empty ``{}``.
     """
     if struct is None:
         return None
-    if isinstance(struct, BaseModel):
-        data = struct.model_dump(by_alias=False, exclude_none=True)
-    else:
-        data = dict(struct)
+    data = struct.model_dump(by_alias=False, exclude_none=True)
     return data or None
 
 

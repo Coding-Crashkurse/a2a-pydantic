@@ -43,7 +43,11 @@ def test_tenant_on_send_message_request_emits_warning() -> None:
 
 
 def test_multi_payload_part_warns_and_keeps_text() -> None:
-    part = v10.Part(text="hi", url="https://x/y", media_type="text/plain")
+    # v10.Part's one-of validator blocks normal construction of a
+    # multi-payload part, but the converter still defends against values
+    # that bypassed validation (e.g. model_construct, post-construction
+    # attribute assignment). Use model_construct to reproduce that state.
+    part = v10.Part.model_construct(text="hi", url="https://x/y", media_type="text/plain")
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
         out = convert_to_v03(part)

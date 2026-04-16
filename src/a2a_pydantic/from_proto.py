@@ -17,15 +17,10 @@ which pulls in ``a2a-sdk>=1.0.0a1`` for the ``a2a.types.a2a_pb2`` module.
 Importing this module without the extra raises a clear ``ImportError``
 pointing at the install command.
 
-**Known limitation — Struct metadata round-trip:** The v10 ``Struct``
-model is a generated empty-schema stub, and ``A2ABaseModel`` does not
-permit extra fields. Any ``metadata`` payload carried in a pb2
-``google.protobuf.Struct`` is therefore **dropped** on the way back:
-the field is preserved as an empty ``v10.Struct()`` if it was set at
-all, but the actual key/value pairs do not survive. The forward
-direction (:func:`convert_to_proto`) has the symmetric issue. This is
-not a converter bug — it is a limitation of the generated ``v10.Struct``
-model that would need to be fixed upstream in the codegen step.
+``metadata``, ``params`` and similar ``Struct``-typed fields round-trip
+lossless in both directions — ``v10.Struct`` is generated with
+``model_config.extra='allow'``, so arbitrary key/value payloads survive
+the Pydantic → pb2 → Pydantic cycle.
 """
 
 from __future__ import annotations
@@ -68,17 +63,16 @@ def _pb_value_to_any(v: struct_pb2.Value) -> Any:
 
 
 def _pb_struct_to_v10(s: struct_pb2.Struct | None) -> v10.Struct | None:
-    """Convert a pb2 ``Struct`` to ``v10.Struct``.
+    """Convert a pb2 ``Struct`` to ``v10.Struct``, preserving all keys.
 
-    Because ``v10.Struct`` is an empty-schema model with no extra-field
-    support, the key/value pairs inside ``s`` are dropped. We still
-    return a populated ``v10.Struct()`` instance when the source had
-    any fields, so callers can at least distinguish "metadata was set"
-    from "metadata was unset".
+    ``v10.Struct`` uses ``model_config.extra='allow'`` so we can stuff
+    the full pb2 payload in via ``model_validate`` and every key/value
+    pair round-trips.
     """
     if s is None or not s.fields:
         return None
-    return v10.Struct()
+    data = {k: _pb_value_to_any(v) for k, v in s.fields.items()}
+    return v10.Struct.model_validate(data)
 
 
 def _pb_value_to_v10(v: struct_pb2.Value | None) -> v10.Value | None:

@@ -67,7 +67,10 @@ def test_wire_roundtrip_is_lossless_for_scalar_fields() -> None:
 def test_part_oneof_collapse_warns_on_multi_payload() -> None:
     import warnings
 
-    part = v10.Part(text="a", url="https://x/y")
+    # Bypass v10.Part's one-of validator via model_construct — the pb2
+    # converter's own guard still fires because pb2's oneof would silently
+    # collapse to the last write.
+    part = v10.Part.model_construct(text="a", url="https://x/y")
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
         convert_to_proto(part)

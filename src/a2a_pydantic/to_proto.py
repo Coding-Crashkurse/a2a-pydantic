@@ -86,17 +86,15 @@ def _dict_to_pb_struct(d: dict[str, Any] | None) -> struct_pb2.Struct | None:
 
 
 def _struct_obj_to_pb(s: v10.Struct | None) -> struct_pb2.Struct | None:
-    """Convert a v10 ``Struct`` placeholder to a ``google.protobuf.Struct``.
+    """Convert a v10 ``Struct`` to a ``google.protobuf.Struct``.
 
-    v10's ``Struct`` is a generated stub with no declared fields, so this
-    normally yields an empty proto Struct. We still go through
-    ``model_dump`` so that any ``extra='allow'`` payload (if the base
-    class ever gains it) round-trips.
+    ``Struct`` uses ``model_config.extra='allow'``, so ``model_dump``
+    returns the full payload as a plain dict which is then packed into
+    a ``google.protobuf.Struct`` field-by-field.
     """
     if s is None:
         return None
-    data = s.model_dump(by_alias=False, exclude_none=True)
-    return _dict_to_pb_struct(data)
+    return _dict_to_pb_struct(s.model_dump(by_alias=False, exclude_none=True))
 
 
 def _value_obj_to_pb(v: v10.Value | None) -> struct_pb2.Value | None:
