@@ -101,6 +101,8 @@ def test_task_with_artifacts_roundtrips() -> None:
 def test_send_message_response_oneof() -> None:
     pb_resp = pb2.SendMessageResponse()
     pb_resp.task.id = "t-42"
+    # TaskState=0 (UNSPECIFIED) now raises strictly; set a valid state
+    pb_resp.task.status.state = pb2.TASK_STATE_COMPLETED
     back = convert_from_proto(pb_resp)
     assert back.task is not None
     assert back.task.id == "t-42"
@@ -112,3 +114,72 @@ def test_unsupported_type_raises_for_both_directions() -> None:
         convert_to_proto(42)  # type: ignore[arg-type]
     with pytest.raises(TypeError):
         convert_from_proto(42)  # type: ignore[arg-type]
+
+
+def test_decode_raw_rejects_invalid_base64() -> None:
+    # v10.Part.raw is supposed to be base64; silent utf-8 fallback would
+    # corrupt binary payloads instead of telling the caller about the bug.
+    bad_part = v10.Part.model_construct(raw="this is not base64 at all!!")
+    with pytest.raises(ValueError, match="not valid base64"):
+        convert_to_proto(bad_part)
+
+
+def test_decode_raw_accepts_valid_base64() -> None:
+    import base64 as _b64
+
+    payload = b"binary data \x00\x01\x02"
+    part = v10.Part(raw=_b64.b64encode(payload).decode("ascii"))
+    out = convert_to_proto(part)
+    assert out.raw == payload
+
+
+def test_role_unspecified_raises_loudly() -> None:
+    # Silent coercion ROLE_UNSPECIFIED -> ROLE_USER would mask a server bug.
+    bad_msg = pb2.Message(
+        message_id="m",
+        role=pb2.ROLE_UNSPECIFIED,
+        parts=[pb2.Part(text="x")],
+    )
+    with pytest.raises(ValueError, match="ROLE_UNSPECIFIED"):
+        convert_from_proto(bad_msg)
+
+
+def test_task_state_unspecified_raises_loudly() -> None:
+    bad_status = pb2.TaskStatus(state=pb2.TASK_STATE_UNSPECIFIED)
+    with pytest.raises(ValueError, match="TASK_STATE_UNSPECIFIED"):
+        convert_from_proto(bad_status)
+
+
+def test_empty_pb_part_raises_on_spec_violation() -> None:
+    # pb2.Part with no content oneof populated violates A2A §4.1.6. We raise
+    # loudly instead of silently emitting an empty TextPart that would bubble
+    # up as a confusing empty artifact downstream.
+    empty_part = pb2.Part()
+    with pytest.raises(ValueError, match="has no content oneof"):
+        convert_from_proto(empty_part)
+
+
+def test_v10_to_proto_to_v10_roundtrip() -> None:
+    """Roundtrip catches bugs a single-direction test would miss."""
+    original = v10.SendMessageRequest(
+        message=v10.Message(
+            message_id="m-1",
+            role=v10.Role.role_agent,
+            parts=[v10.Part(text="round trip")],
+            metadata=v10.Struct(trace_id="abc", retries=3),
+        ),
+        tenant="acme",
+    )
+    pb_form = convert_to_proto(original)
+    roundtripped = convert_from_proto(pb_form)
+
+    assert roundtripped.tenant == "acme"
+    assert roundtripped.message.message_id == "m-1"
+    assert roundtripped.message.role is v10.Role.role_agent
+    assert roundtripped.message.parts[0].text == "round trip"
+    # Struct metadata survives thanks to extra='allow'
+    assert roundtripped.message.metadata is not None
+    assert roundtripped.message.metadata.model_dump(exclude_none=True) == {
+        "trace_id": "abc",
+        "retries": 3,
+    }

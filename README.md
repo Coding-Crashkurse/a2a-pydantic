@@ -85,6 +85,13 @@ All model classes live under `a2a_pydantic.v10` and are generated from the
 official A2A JSON Schema. Field names are snake_case in Python, camelCase
 on the wire (via `A2ABaseModel`'s alias generator).
 
+> **Note on optional string defaults.** Many v1.0 string fields are typed
+> as `str | None = ''` rather than `str | None = None`. That looks odd,
+> but it mirrors proto3 semantics: proto3 does not distinguish "unset"
+> from "empty string" for scalar `string` fields, so we keep the
+> generator output faithful to preserve round-trip fidelity with pb2.
+> Treat `''` and `None` as equivalent for serialization purposes.
+
 ## Basic usage — v0.3 models
 
 ```python
@@ -181,6 +188,12 @@ defaults for them would silently corrupt data.
 | `APIKeySecurityScheme` | same | `location: str` → `in_: In` enum |
 | `OAuthFlows` + all flows | same | `device_code` dropped |
 | `Role`, `TaskState` enums | same | Protobuf → lowercase mapping |
+| `GetTaskRequest` | `TaskQueryParams` | – |
+| `CancelTaskRequest` | `TaskIdParams` | – |
+| `SubscribeToTaskRequest` | `TaskIdParams` | – |
+| `GetTaskPushNotificationConfigRequest` | `GetTaskPushNotificationConfigParams` | `task_id`/`id` flattened |
+| `DeleteTaskPushNotificationConfigRequest` | `DeleteTaskPushNotificationConfigParams` | `task_id`/`id` flattened |
+| `ListTaskPushNotificationConfigsRequest` | `ListTaskPushNotificationConfigParams` | pagination fields dropped with warning |
 
 ## Bridging v1.0 → a2a-sdk protobuf
 

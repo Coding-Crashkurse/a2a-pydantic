@@ -29,6 +29,7 @@ except ImportError as e:
     ) from e
 
 import base64
+import binascii
 import warnings
 from functools import singledispatch
 from typing import Any, overload
@@ -131,13 +132,24 @@ _TASK_STATE_TO_PROTO: dict[v10.TaskState, pb2.TaskState] = {
 
 
 def _decode_raw(raw: str | None) -> bytes:
-    """v10 stores ``Part.raw`` as a base64 string; pb2 needs raw bytes."""
+    """Decode a base64 ``Part.raw`` string to the bytes pb2 expects.
+
+    v10 stores ``Part.raw`` as a base64-encoded string (the JSON-schema wire
+    format), pb2 needs the decoded bytes. We validate strictly because a
+    silent utf-8 fallback would corrupt binary payloads — an upstream Part
+    with mangled base64 is a bug the caller needs to see, not something we
+    paper over.
+    """
     if not raw:
         return b""
     try:
-        return base64.b64decode(raw, validate=False)
-    except Exception:
-        return raw.encode("utf-8")
+        return base64.b64decode(raw, validate=True)
+    except binascii.Error as e:
+        raise ValueError(
+            f"Part.raw is not valid base64 ({e}); pb2 requires decoded bytes "
+            "and silent fallback would corrupt binary payloads. Either pass a "
+            "properly base64-encoded string or use Part.url / Part.text."
+        ) from e
 
 
 def _to_pb_part(p: v10.Part) -> pb2.Part:

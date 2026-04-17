@@ -289,6 +289,82 @@ def _send_message_request(r: v10.SendMessageRequest) -> v03.MessageSendParams:
     )
 
 
+def _get_task_request(r: v10.GetTaskRequest) -> v03.TaskQueryParams:
+    if r.tenant:
+        _warn(f"v10.GetTaskRequest.tenant={r.tenant!r} is dropped (v0.3 has no tenant concept)")
+    return v03.TaskQueryParams(
+        id=r.id,
+        history_length=r.history_length,
+    )
+
+
+def _cancel_task_request(r: v10.CancelTaskRequest) -> v03.TaskIdParams:
+    if r.tenant:
+        _warn(f"v10.CancelTaskRequest.tenant={r.tenant!r} is dropped (v0.3 has no tenant concept)")
+    return v03.TaskIdParams(
+        id=r.id,
+        metadata=_struct_to_dict(r.metadata),
+    )
+
+
+def _subscribe_to_task_request(r: v10.SubscribeToTaskRequest) -> v03.TaskIdParams:
+    if r.tenant:
+        _warn(
+            f"v10.SubscribeToTaskRequest.tenant={r.tenant!r} is dropped "
+            "(v0.3 has no tenant concept)"
+        )
+    return v03.TaskIdParams(id=r.id)
+
+
+def _get_task_push_notification_config_request(
+    r: v10.GetTaskPushNotificationConfigRequest,
+) -> v03.GetTaskPushNotificationConfigParams:
+    if r.tenant:
+        _warn(
+            f"v10.GetTaskPushNotificationConfigRequest.tenant={r.tenant!r} "
+            "is dropped (v0.3 has no tenant concept)"
+        )
+    return v03.GetTaskPushNotificationConfigParams(
+        id=r.task_id,
+        push_notification_config_id=r.id,
+    )
+
+
+def _delete_task_push_notification_config_request(
+    r: v10.DeleteTaskPushNotificationConfigRequest,
+) -> v03.DeleteTaskPushNotificationConfigParams:
+    if r.tenant:
+        _warn(
+            f"v10.DeleteTaskPushNotificationConfigRequest.tenant={r.tenant!r} "
+            "is dropped (v0.3 has no tenant concept)"
+        )
+    return v03.DeleteTaskPushNotificationConfigParams(
+        id=r.task_id,
+        push_notification_config_id=r.id,
+    )
+
+
+def _list_task_push_notification_configs_request(
+    r: v10.ListTaskPushNotificationConfigsRequest,
+) -> v03.ListTaskPushNotificationConfigParams:
+    if r.tenant:
+        _warn(
+            f"v10.ListTaskPushNotificationConfigsRequest.tenant={r.tenant!r} "
+            "is dropped (v0.3 has no tenant concept)"
+        )
+    if r.page_size:
+        _warn(
+            f"v10.ListTaskPushNotificationConfigsRequest.page_size={r.page_size} "
+            "is dropped (v0.3 has no pagination on this endpoint)"
+        )
+    if r.page_token:
+        _warn(
+            f"v10.ListTaskPushNotificationConfigsRequest.page_token={r.page_token!r} "
+            "is dropped (v0.3 has no pagination on this endpoint)"
+        )
+    return v03.ListTaskPushNotificationConfigParams(id=r.task_id)
+
+
 def _agent_extension(e: v10.AgentExtension) -> v03.AgentExtension:
     if not e.uri:
         _warn(
@@ -617,6 +693,24 @@ def convert_to_v03(obj: v10.AgentCardSignature) -> v03.AgentCardSignature: ...
 def convert_to_v03(obj: v10.SecurityScheme) -> v03.SecurityScheme: ...
 @overload
 def convert_to_v03(obj: v10.OAuthFlows) -> v03.OAuthFlows: ...
+@overload
+def convert_to_v03(obj: v10.GetTaskRequest) -> v03.TaskQueryParams: ...
+@overload
+def convert_to_v03(obj: v10.CancelTaskRequest) -> v03.TaskIdParams: ...
+@overload
+def convert_to_v03(obj: v10.SubscribeToTaskRequest) -> v03.TaskIdParams: ...
+@overload
+def convert_to_v03(
+    obj: v10.GetTaskPushNotificationConfigRequest,
+) -> v03.GetTaskPushNotificationConfigParams: ...
+@overload
+def convert_to_v03(
+    obj: v10.DeleteTaskPushNotificationConfigRequest,
+) -> v03.DeleteTaskPushNotificationConfigParams: ...
+@overload
+def convert_to_v03(
+    obj: v10.ListTaskPushNotificationConfigsRequest,
+) -> v03.ListTaskPushNotificationConfigParams: ...
 @singledispatch
 def convert_to_v03(obj: Any) -> Any:
     """Downgrade a v1.0 A2A model to its v0.3 equivalent.
@@ -656,5 +750,11 @@ for _v10_type, _fn in {
     v10.AgentCardSignature: _agent_card_signature,
     v10.SecurityScheme: _security_scheme,
     v10.OAuthFlows: _oauth_flows,
+    v10.GetTaskRequest: _get_task_request,
+    v10.CancelTaskRequest: _cancel_task_request,
+    v10.SubscribeToTaskRequest: _subscribe_to_task_request,
+    v10.GetTaskPushNotificationConfigRequest: _get_task_push_notification_config_request,
+    v10.DeleteTaskPushNotificationConfigRequest: _delete_task_push_notification_config_request,
+    v10.ListTaskPushNotificationConfigsRequest: _list_task_push_notification_configs_request,
 }.items():
     convert_to_v03.register(_v10_type)(_fn)  # type: ignore[attr-defined]

@@ -67,3 +67,59 @@ def test_task_state_enum_maps() -> None:
 def test_unsupported_type_raises() -> None:
     with pytest.raises(TypeError, match="No v10 -> v03 converter registered"):
         convert_to_v03(42)  # type: ignore[arg-type]
+
+
+def test_get_task_request_converts_with_tenant_warning() -> None:
+    req = v10.GetTaskRequest(id="t-1", tenant="acme", history_length=5)
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        out = convert_to_v03(req)
+    assert isinstance(out, v03.TaskQueryParams)
+    assert out.id == "t-1"
+    assert out.history_length == 5
+    assert any("tenant" in str(w.message) for w in captured)
+
+
+def test_cancel_task_request_converts() -> None:
+    req = v10.CancelTaskRequest(id="t-2")
+    out = convert_to_v03(req)
+    assert isinstance(out, v03.TaskIdParams)
+    assert out.id == "t-2"
+
+
+def test_subscribe_to_task_request_converts() -> None:
+    req = v10.SubscribeToTaskRequest(id="t-3")
+    out = convert_to_v03(req)
+    assert isinstance(out, v03.TaskIdParams)
+    assert out.id == "t-3"
+
+
+def test_get_push_notification_config_request_remaps_ids() -> None:
+    # In v1.0 the task_id is the path-parent and `id` is the config id.
+    # v0.3 flattens this: TaskQueryParams-style where `id` is the task
+    # and push_notification_config_id is the nested config id.
+    req = v10.GetTaskPushNotificationConfigRequest(task_id="t-4", id="cfg-1")
+    out = convert_to_v03(req)
+    assert isinstance(out, v03.GetTaskPushNotificationConfigParams)
+    assert out.id == "t-4"
+    assert out.push_notification_config_id == "cfg-1"
+
+
+def test_delete_push_notification_config_request_remaps_ids() -> None:
+    req = v10.DeleteTaskPushNotificationConfigRequest(task_id="t-5", id="cfg-2")
+    out = convert_to_v03(req)
+    assert isinstance(out, v03.DeleteTaskPushNotificationConfigParams)
+    assert out.id == "t-5"
+    assert out.push_notification_config_id == "cfg-2"
+
+
+def test_list_push_notification_configs_request_warns_on_pagination() -> None:
+    req = v10.ListTaskPushNotificationConfigsRequest(task_id="t-6", page_size=50, page_token="abc")
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        out = convert_to_v03(req)
+    assert isinstance(out, v03.ListTaskPushNotificationConfigParams)
+    assert out.id == "t-6"
+    messages = [str(w.message) for w in captured]
+    assert any("page_size" in m for m in messages)
+    assert any("page_token" in m for m in messages)

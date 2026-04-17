@@ -390,15 +390,23 @@ def rename_reserved_properties(schema: dict) -> None:
 
 
 def make_struct_a_dict_wrapper(schema: dict) -> None:
-    """Turn the empty ``Struct`` stub into a proper ``dict[str, Any]`` payload.
+    """Let ``Struct`` accept arbitrary key/value payloads.
 
     Upstream declares ``Struct`` as ``{"type": "object"}`` with no properties.
     datamodel-codegen turns that into an empty ``class Struct(A2ABaseModel)``
     that silently drops every key/value pair assigned to it — which made
     ``metadata`` / ``params`` / ``header`` round-trips lossy on both the v0.3
     and pb2 bridges. Adding ``additionalProperties: True`` makes the generator
-    emit ``Struct`` as ``RootModel[dict[str, Any]]`` instead, so ``metadata``
-    actually carries its payload end-to-end.
+    emit ``Struct`` with ``model_config.extra='allow'`` (NOT ``RootModel``),
+    which gives us free-form key/value storage without a ``.root`` unwrap.
+
+    Note on aliasing: ``alias_generator=to_camel_custom`` on ``A2ABaseModel``
+    applies to *declared* fields only, not to the ``extra='allow'`` payload.
+    That means user-chosen metadata keys are preserved verbatim through
+    serialization — ``Struct(trace_id="x").model_dump(by_alias=True)`` yields
+    ``{"trace_id": "x"}``, not ``{"traceId": "x"}``. This is the correct
+    behavior: metadata is free-form user payload, not a spec-defined field
+    whose name should be canonicalized.
     """
     defs = schema.get("definitions", {})
     struct = defs.get("Struct")

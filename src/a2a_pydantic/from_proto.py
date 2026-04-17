@@ -112,11 +112,27 @@ _PROTO_TO_TASK_STATE: dict[int, v10.TaskState] = {
 
 
 def _role_from_proto(role_int: int) -> v10.Role:
-    return _PROTO_TO_ROLE.get(role_int, v10.Role.role_user)
+    try:
+        return _PROTO_TO_ROLE[role_int]
+    except KeyError as e:
+        raise ValueError(
+            f"pb2 Role value {role_int} has no v10 mapping. The proto default "
+            "0 (ROLE_UNSPECIFIED) indicates an unset/invalid role that the "
+            "A2A spec does not permit on the wire — silently coercing to "
+            "ROLE_USER would mask a real bug."
+        ) from e
 
 
 def _task_state_from_proto(state_int: int) -> v10.TaskState:
-    return _PROTO_TO_TASK_STATE.get(state_int, v10.TaskState.task_state_submitted)
+    try:
+        return _PROTO_TO_TASK_STATE[state_int]
+    except KeyError as e:
+        raise ValueError(
+            f"pb2 TaskState value {state_int} has no v10 mapping. The proto "
+            "default 0 (TASK_STATE_UNSPECIFIED) indicates an unset/invalid "
+            "task state that the A2A spec does not permit on the wire — "
+            "silently coercing to TASK_STATE_SUBMITTED would mask a real bug."
+        ) from e
 
 
 def _from_pb_part(p: pb2.Part) -> v10.Part:
@@ -125,6 +141,13 @@ def _from_pb_part(p: pb2.Part) -> v10.Part:
     The oneof tag on pb2 tells us exactly which payload is set; we route
     it into the matching flat field on v10.Part and leave the others as
     ``None``.
+
+    A pb2 Part with no ``content`` oneof populated violates A2A spec
+    §4.1.6 ("a Part MUST contain exactly one of text, raw, url, data").
+    We raise instead of silently falling back to an empty text part —
+    that would mask a real server bug and bubble up as a confusing empty
+    artifact downstream. Callers that want lenient behavior can wrap
+    this call in their own ``try/except ValueError``.
     """
     content = p.WhichOneof("content")
     kwargs: dict[str, Any] = {}
@@ -136,6 +159,12 @@ def _from_pb_part(p: pb2.Part) -> v10.Part:
         kwargs["url"] = p.url
     elif content == "data":
         kwargs["data"] = _pb_value_to_v10(p.data)
+    else:
+        raise ValueError(
+            "pb2.Part has no content oneof populated — this violates A2A "
+            "v1.0 spec §4.1.6 ('a Part MUST contain exactly one of text, "
+            "raw, url, data'). The server is sending an invalid Part."
+        )
     if p.filename:
         kwargs["filename"] = p.filename
     if p.media_type:
