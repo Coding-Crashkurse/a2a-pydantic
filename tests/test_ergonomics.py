@@ -204,6 +204,119 @@ class TestPartDataWrappingCoercion:
         assert p.data.root == {"y": 2}
 
 
+class TestStructMappingAPI:
+    def test_get_with_existing_key(self) -> None:
+        s = v10.Struct(trace="abc", retries=2)
+        assert s.get("trace") == "abc"
+        assert s.get("retries") == 2
+
+    def test_get_missing_returns_none(self) -> None:
+        s = v10.Struct(trace="abc")
+        assert s.get("nope") is None
+
+    def test_get_missing_returns_default(self) -> None:
+        s = v10.Struct()
+        assert s.get("nope", "fallback") == "fallback"
+
+    def test_getitem_existing(self) -> None:
+        s = v10.Struct(k="v")
+        assert s["k"] == "v"
+
+    def test_getitem_missing_raises_keyerror(self) -> None:
+        s = v10.Struct()
+        with pytest.raises(KeyError):
+            s["nope"]
+
+    def test_contains(self) -> None:
+        s = v10.Struct(present=1)
+        assert "present" in s
+        assert "absent" not in s
+
+    def test_setitem_adds_key(self) -> None:
+        s = v10.Struct()
+        s["new"] = 42
+        assert s["new"] == 42
+
+    def test_delitem_removes_key(self) -> None:
+        s = v10.Struct(gone=1, stays=2)
+        del s["gone"]
+        assert "gone" not in s
+        assert s["stays"] == 2
+
+    def test_delitem_missing_raises_keyerror(self) -> None:
+        s = v10.Struct()
+        with pytest.raises(KeyError):
+            del s["nope"]
+
+    def test_iter_yields_keys(self) -> None:
+        s = v10.Struct(a=1, b=2, c=3)
+        # Mapping convention: iter yields keys, not (key, value) tuples.
+        assert sorted(list(s)) == ["a", "b", "c"]
+
+    def test_len(self) -> None:
+        assert len(v10.Struct()) == 0
+        assert len(v10.Struct(a=1, b=2)) == 2
+
+    def test_keys_values_items(self) -> None:
+        s = v10.Struct(a=1, b=2)
+        assert sorted(s.keys()) == ["a", "b"]
+        assert sorted(s.values()) == [1, 2]
+        assert sorted(s.items()) == [("a", 1), ("b", 2)]
+
+    def test_update_with_dict(self) -> None:
+        s = v10.Struct(a=1)
+        s.update({"b": 2, "c": 3})
+        assert s["a"] == 1 and s["b"] == 2 and s["c"] == 3
+
+    def test_update_with_kwargs(self) -> None:
+        s = v10.Struct()
+        s.update(x=1, y=2)
+        assert s["x"] == 1 and s["y"] == 2
+
+    def test_setdefault_existing_returns_current(self) -> None:
+        s = v10.Struct(k="original")
+        assert s.setdefault("k", "new") == "original"
+        assert s["k"] == "original"
+
+    def test_setdefault_missing_inserts_and_returns(self) -> None:
+        s = v10.Struct()
+        assert s.setdefault("k", "v") == "v"
+        assert s["k"] == "v"
+
+    def test_pop_existing(self) -> None:
+        s = v10.Struct(gone=1, stays=2)
+        assert s.pop("gone") == 1
+        assert "gone" not in s
+
+    def test_pop_missing_raises(self) -> None:
+        s = v10.Struct()
+        with pytest.raises(KeyError):
+            s.pop("nope")
+
+    def test_pop_missing_with_default_returns_default(self) -> None:
+        s = v10.Struct()
+        assert s.pop("nope", "fallback") == "fallback"
+
+    def test_dict_roundtrip(self) -> None:
+        s = v10.Struct(trace="abc", retries=2)
+        # Mapping protocol (keys + __getitem__) makes dict(struct) work.
+        assert dict(s) == {"trace": "abc", "retries": 2}
+
+    def test_survives_convert_to_v03(self) -> None:
+        # Mutation through MutableMapping API must not desynchronize
+        # __pydantic_extra__ from what model_dump sees. convert_to_v03
+        # calls struct.model_dump() internally.
+        task = v10.Task(
+            id="t-1",
+            status=v10.TaskStatus(state=v10.TaskState.task_state_submitted),
+            metadata=v10.Struct(trace="abc"),
+        )
+        assert task.metadata is not None
+        task.metadata["retries"] = 3
+        out = convert_to_v03(task)
+        assert out.metadata == {"trace": "abc", "retries": 3}
+
+
 class TestAssumeFinalKwarg:
     def _event(self) -> v10.TaskStatusUpdateEvent:
         return v10.TaskStatusUpdateEvent(

@@ -130,6 +130,104 @@ def _coerce_part_inputs(data: Any) -> Any:
 _INPUT_COERCERS[_models.Part] = _coerce_part_inputs
 
 
+# v10.Struct is conceptually a typed-dict wrapper — no declared fields,
+# ConfigDict(extra='allow') so every user-supplied key lands in
+# __pydantic_extra__. Without a Mapping/MutableMapping API on top of that,
+# callers can't do the natural ``struct.get(key)`` / ``key in struct`` /
+# ``for k, v in struct.items()`` and end up with ``meta_as_dict`` /
+# ``meta_as_struct`` wrapper helpers at every call site. Expose the
+# MutableMapping protocol here against ``__pydantic_extra__`` directly.
+#
+# ``__iter__`` is overridden to yield keys (MutableMapping convention)
+# rather than ``(key, value)`` tuples (BaseModel convention). Use
+# ``struct.items()`` for the pair form.
+def _struct_getitem(self: Any, key: str) -> Any:
+    extra = self.__pydantic_extra__ or {}
+    if key not in extra:
+        raise KeyError(key)
+    return extra[key]
+
+
+def _struct_setitem(self: Any, key: str, value: Any) -> None:
+    if self.__pydantic_extra__ is None:
+        object.__setattr__(self, "__pydantic_extra__", {})
+    self.__pydantic_extra__[key] = value
+
+
+def _struct_delitem(self: Any, key: str) -> None:
+    extra = self.__pydantic_extra__ or {}
+    if key not in extra:
+        raise KeyError(key)
+    del extra[key]
+
+
+def _struct_iter(self: Any) -> Any:
+    return iter(self.__pydantic_extra__ or {})
+
+
+def _struct_len(self: Any) -> int:
+    return len(self.__pydantic_extra__ or {})
+
+
+def _struct_contains(self: Any, key: object) -> bool:
+    return key in (self.__pydantic_extra__ or {})
+
+
+def _struct_get(self: Any, key: str, default: Any = None) -> Any:
+    return (self.__pydantic_extra__ or {}).get(key, default)
+
+
+def _struct_keys(self: Any) -> Any:
+    return (self.__pydantic_extra__ or {}).keys()
+
+
+def _struct_values(self: Any) -> Any:
+    return (self.__pydantic_extra__ or {}).values()
+
+
+def _struct_items(self: Any) -> Any:
+    return (self.__pydantic_extra__ or {}).items()
+
+
+_STRUCT_POP_SENTINEL = object()
+
+
+def _struct_pop(self: Any, key: str, default: Any = _STRUCT_POP_SENTINEL) -> Any:
+    extra = self.__pydantic_extra__ or {}
+    if key in extra:
+        return extra.pop(key)
+    if default is _STRUCT_POP_SENTINEL:
+        raise KeyError(key)
+    return default
+
+
+def _struct_setdefault(self: Any, key: str, default: Any = None) -> Any:
+    if self.__pydantic_extra__ is None:
+        object.__setattr__(self, "__pydantic_extra__", {})
+    return self.__pydantic_extra__.setdefault(key, default)
+
+
+def _struct_update(self: Any, *args: Any, **kwargs: Any) -> None:
+    if self.__pydantic_extra__ is None:
+        object.__setattr__(self, "__pydantic_extra__", {})
+    self.__pydantic_extra__.update(*args, **kwargs)
+
+
+setattr(_models.Struct, "__getitem__", _struct_getitem)  # noqa: B010
+setattr(_models.Struct, "__setitem__", _struct_setitem)  # noqa: B010
+setattr(_models.Struct, "__delitem__", _struct_delitem)  # noqa: B010
+setattr(_models.Struct, "__iter__", _struct_iter)  # noqa: B010
+setattr(_models.Struct, "__len__", _struct_len)  # noqa: B010
+setattr(_models.Struct, "__contains__", _struct_contains)  # noqa: B010
+setattr(_models.Struct, "get", _struct_get)  # noqa: B010
+setattr(_models.Struct, "keys", _struct_keys)  # noqa: B010
+setattr(_models.Struct, "values", _struct_values)  # noqa: B010
+setattr(_models.Struct, "items", _struct_items)  # noqa: B010
+setattr(_models.Struct, "pop", _struct_pop)  # noqa: B010
+setattr(_models.Struct, "setdefault", _struct_setdefault)  # noqa: B010
+setattr(_models.Struct, "update", _struct_update)  # noqa: B010
+
+
 # Model-level coercers only run on construction (``model_validate`` path).
 # ``validate_assignment`` is a separate Pydantic path that only re-validates
 # the single changed field against its declared type, so a later

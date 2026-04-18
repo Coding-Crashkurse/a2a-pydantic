@@ -134,6 +134,26 @@ v10.TaskState("Submitted")              # short mixed case
 # ... all return TaskState.task_state_submitted
 ```
 
+**`v10.Struct` implements the `MutableMapping` protocol.** `Struct` is
+just a typed dict wrapper (no declared fields, `extra='allow'`), so the
+natural dict-style access works:
+
+```python
+meta = v10.Struct(trace="abc", retries=0)
+
+meta.get("trace")                     # "abc"
+meta["retries"]                       # 0
+"trace" in meta                       # True
+for k, v in meta.items(): ...
+meta["new_key"] = 42                  # setitem
+meta.update({"more": "data"})         # in-place merge
+```
+
+`iter(struct)` yields keys (not `(key, value)` tuples — use
+`struct.items()` for the pair form). `dict(struct)` works via the
+standard mapping protocol. Mutation propagates to `model_dump` /
+`convert_to_v03`, so you can freely edit metadata in place.
+
 **`v10.Part` takes Python-native inputs.** Three papercuts collapse to
 one-liners as of 0.0.7:
 
