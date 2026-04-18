@@ -1,3 +1,6 @@
+from collections.abc import Callable
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, model_validator
 from pydantic.alias_generators import to_camel
 
@@ -29,6 +32,16 @@ def to_camel_custom(snake: str) -> str:
 _ONE_OF_FIELDS: dict[type, tuple[str, ...]] = {}
 
 
+# Registry of per-class before-validators used to coerce user-friendly Python
+# values into the strict types declared on generated models — e.g. turning
+# ``v10.Part(raw=b"...")`` into base64 or ``v10.Part(data={"k": "v"})`` into
+# a ``Value`` wrapper without making callers do it by hand. Populated by
+# ``a2a_pydantic.v10.__init__`` at import time.
+#
+# Keyed on class identity for the same reason as :data:`_ONE_OF_FIELDS`.
+_INPUT_COERCERS: dict[type, Callable[[Any], Any]] = {}
+
+
 class A2ABaseModel(BaseModel):
     """Base class for shared behavior across A2A data models.
 
@@ -52,6 +65,14 @@ class A2ABaseModel(BaseModel):
         # silently storing a plain dict that later crashes convert_to_v03.
         validate_assignment=True,
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_input_coercers(cls, data: Any) -> Any:
+        coercer = _INPUT_COERCERS.get(cls)
+        if coercer is None:
+            return data
+        return coercer(data)
 
     @model_validator(mode="after")
     def _enforce_one_of(self):

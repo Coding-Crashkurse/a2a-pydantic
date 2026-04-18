@@ -1,6 +1,6 @@
-"""Regression tests for the v0.0.5 ergonomics fixes.
+"""Regression tests for the v0.0.5 and v0.0.7 ergonomics fixes.
 
-Covers the four changes shipped in v0.0.5:
+v0.0.5 — four changes:
 
 * ``A2ABaseModel`` now runs ``validate_assignment=True`` so that
   ``task.metadata = {"a": 1}`` is coerced back to :class:`v10.Struct`
@@ -15,10 +15,20 @@ Covers the four changes shipped in v0.0.5:
 * ``convert_to_v03`` accepts an ``assume_final`` kwarg that overrides the
   synthetic ``final`` flag on v0.3 ``TaskStatusUpdateEvent`` AND suppresses
   the "defaulting final=False" warning when the caller has already decided.
+
+v0.0.7 — :class:`v10.Part` ergonomics:
+
+* ``filename`` and ``media_type`` default to ``None`` (was ``""``), so the
+  natural ``if p.filename:`` idiom works without the ``or None`` hedge.
+* ``v10.Part(data={"k": "v"})`` auto-wraps the dict in :class:`v10.Value`.
+* ``v10.Part(raw=b"...")`` auto-base64-encodes the bytes; assignment
+  (``part.raw = b"..."``) does the same, so Pydantic's default
+  ``bytes -> str`` UTF-8 coercion can't silently corrupt binary payloads.
 """
 
 from __future__ import annotations
 
+import base64
 import warnings
 from datetime import UTC, datetime
 
@@ -124,6 +134,74 @@ class TestTaskStateCaseInsensitiveLookup:
     def test_unknown_still_raises(self) -> None:
         with pytest.raises(ValueError):
             v10.TaskState("nope")
+
+
+class TestPartDefaults:
+    def test_filename_defaults_to_none(self) -> None:
+        p = v10.Part(text="hi")
+        assert p.filename is None
+
+    def test_media_type_defaults_to_none(self) -> None:
+        p = v10.Part(text="hi")
+        assert p.media_type is None
+
+    def test_explicit_filename_preserved(self) -> None:
+        p = v10.Part(url="https://x/y.pdf", filename="y.pdf")
+        assert p.filename == "y.pdf"
+
+
+class TestPartRawBytesCoercion:
+    def test_construction_with_bytes_base64_encodes(self) -> None:
+        payload = b"hello world"
+        p = v10.Part(raw=payload, media_type="text/plain")
+        assert p.raw == base64.b64encode(payload).decode("ascii")
+
+    def test_construction_with_binary_bytes_does_not_utf8_decode(self) -> None:
+        # The whole point: silent UTF-8 decoding would corrupt binary data.
+        payload = b"\x00\x01\x02\xff"
+        p = v10.Part(raw=payload)
+        assert base64.b64decode(p.raw) == payload
+
+    def test_assignment_with_bytes_base64_encodes(self) -> None:
+        # validate_assignment is a separate pydantic path; the __setattr__
+        # override on Part must catch bytes on assignment too, not just
+        # construction.
+        p = v10.Part(raw=base64.b64encode(b"aaa").decode("ascii"))
+        p.raw = b"bbb"
+        assert p.raw == base64.b64encode(b"bbb").decode("ascii")
+
+    def test_already_encoded_string_passes_through(self) -> None:
+        already = base64.b64encode(b"x").decode("ascii")
+        p = v10.Part(raw=already)
+        assert p.raw == already
+
+
+class TestPartDataWrappingCoercion:
+    def test_construction_with_dict_wraps_in_value(self) -> None:
+        p = v10.Part(data={"k": 1, "nested": {"m": 2}})
+        assert isinstance(p.data, v10.Value)
+        assert p.data.root == {"k": 1, "nested": {"m": 2}}
+
+    def test_construction_with_list_wraps_in_value(self) -> None:
+        p = v10.Part(data=[1, 2, 3])
+        assert isinstance(p.data, v10.Value)
+        assert p.data.root == [1, 2, 3]
+
+    def test_construction_with_scalar_wraps_in_value(self) -> None:
+        p = v10.Part(data=42)
+        assert isinstance(p.data, v10.Value)
+        assert p.data.root == 42
+
+    def test_already_wrapped_value_passes_through(self) -> None:
+        wrapped = v10.Value(root={"k": 1})
+        p = v10.Part(data=wrapped)
+        assert p.data is wrapped
+
+    def test_assignment_with_dict_wraps(self) -> None:
+        p = v10.Part(data={"x": 1})
+        p.data = {"y": 2}
+        assert isinstance(p.data, v10.Value)
+        assert p.data.root == {"y": 2}
 
 
 class TestAssumeFinalKwarg:

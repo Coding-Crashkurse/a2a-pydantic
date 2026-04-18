@@ -134,16 +134,16 @@ def _part(p: v10.Part) -> v03.Part:
     if chosen == "raw":
         bytes_file = v03.FileWithBytes(
             bytes=p.raw or "",
-            mime_type=p.media_type or None,
-            name=p.filename or None,
+            mime_type=p.media_type,
+            name=p.filename,
         )
         return v03.Part(root=v03.FilePart(file=bytes_file, metadata=metadata))
 
     if chosen == "url":
         uri_file = v03.FileWithUri(
             uri=p.url or "",
-            mime_type=p.media_type or None,
-            name=p.filename or None,
+            mime_type=p.media_type,
+            name=p.filename,
         )
         return v03.Part(root=v03.FilePart(file=uri_file, metadata=metadata))
 

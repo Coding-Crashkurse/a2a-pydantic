@@ -133,6 +133,42 @@ def test_decode_raw_accepts_valid_base64() -> None:
     assert out.raw == payload
 
 
+def test_part_default_filename_media_type_roundtrip_none() -> None:
+    # Default filename / media_type are None (was "" before 0.0.7). Proto3
+    # has no distinction between "unset" and "empty string" for scalars, so
+    # both should round-trip through pb2 as None on the Pydantic side.
+    original = v10.Part(text="hi")
+    assert original.filename is None and original.media_type is None
+    back = convert_from_proto(convert_to_proto(original))
+    assert back.filename is None
+    assert back.media_type is None
+
+
+def test_part_explicit_filename_roundtrips() -> None:
+    original = v10.Part(
+        url="https://x/y.pdf",
+        media_type="application/pdf",
+        filename="invoice.pdf",
+    )
+    back = convert_from_proto(convert_to_proto(original))
+    assert back.filename == "invoice.pdf"
+    assert back.media_type == "application/pdf"
+    assert back.url == "https://x/y.pdf"
+
+
+def test_part_raw_bytes_constructor_roundtrips_binary_payload() -> None:
+    # v10.Part(raw=b"...") is the construction path the 0.0.7 coercer
+    # enables. Round-trip through pb2 should recover the exact bytes,
+    # including non-UTF-8 ones, so silent UTF-8 coercion can't sneak in.
+    payload = b"\x00\x01\x02 mixed with text"
+    part = v10.Part(raw=payload, media_type="application/octet-stream")
+    back = convert_from_proto(convert_to_proto(part))
+    import base64 as _b64
+
+    assert back.raw is not None
+    assert _b64.b64decode(back.raw) == payload
+
+
 def test_role_unspecified_raises_loudly() -> None:
     # Silent coercion ROLE_UNSPECIFIED -> ROLE_USER would mask a server bug.
     bad_msg = pb2.Message(

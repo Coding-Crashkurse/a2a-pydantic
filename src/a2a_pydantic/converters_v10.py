@@ -58,10 +58,6 @@ def _dict_to_struct(data: dict[str, Any] | None) -> v10.Struct | None:
     return v10.Struct.model_validate(data)
 
 
-def _any_to_value(data: Any) -> v10.Value:
-    return v10.Value(root=data)
-
-
 def _iso_to_timestamp(iso: str | None) -> v10.Timestamp | None:
     if iso is None:
         return None
@@ -117,7 +113,7 @@ def _part(p: v03.Part) -> v10.Part:
 
     if isinstance(root, v03.DataPart):
         return v10.Part(
-            data=_any_to_value(root.data),
+            data=root.data,
             media_type="application/json",
             metadata=metadata,
         )
@@ -126,14 +122,14 @@ def _part(p: v03.Part) -> v10.Part:
     if isinstance(file_payload, v03.FileWithBytes):
         return v10.Part(
             raw=file_payload.bytes,
-            media_type=file_payload.mime_type or "",
-            filename=file_payload.name or "",
+            media_type=file_payload.mime_type,
+            filename=file_payload.name,
             metadata=metadata,
         )
     return v10.Part(
         url=file_payload.uri,
-        media_type=file_payload.mime_type or "",
-        filename=file_payload.name or "",
+        media_type=file_payload.mime_type,
+        filename=file_payload.name,
         metadata=metadata,
     )
 

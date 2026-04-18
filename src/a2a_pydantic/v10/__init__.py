@@ -1,6 +1,7 @@
+import base64
 from typing import Any
 
-from a2a_pydantic.base import _ONE_OF_FIELDS
+from a2a_pydantic.base import _INPUT_COERCERS, _ONE_OF_FIELDS
 from a2a_pydantic.v10 import models as _models
 from a2a_pydantic.v10.models import *  # noqa: F401,F403
 
@@ -88,3 +89,63 @@ def _task_state_missing(cls: Any, value: Any) -> Any:
 
 
 setattr(_models.TaskState, "_missing_", classmethod(_task_state_missing))  # noqa: B010
+
+
+# The proto-derived JSON Schema emits ``Part.filename`` and ``Part.media_type``
+# as ``str | None = ""`` to mirror proto3 "unset scalar string == empty string"
+# semantics. That's faithful on the wire but a papercut in Python: every
+# consumer ends up writing ``p.filename or None`` to get sensible behavior.
+# Flip to ``None`` here so the natural ``if p.filename:`` idiom works and the
+# two states ("" / None) collapse to a single "unset" sentinel. Proto
+# round-trips are unaffected because both "" and None serialize to the same
+# pb2 default (empty string on the wire).
+_models.Part.model_fields["filename"].default = None
+_models.Part.model_fields["media_type"].default = None
+_models.Part.model_rebuild(force=True)
+
+
+# v10.Part takes ``data`` as a ``Value`` wrapper and ``raw`` as a base64
+# string on the wire. In Python callers almost always have a plain dict /
+# list / scalar for ``data`` and raw bytes for ``raw``. Coerce those inputs
+# here so ``v10.Part(data={"k": "v"})`` and ``v10.Part(raw=b"...")`` just
+# work without forcing every construction site to wrap or encode by hand.
+def _coerce_part_inputs(data: Any) -> Any:
+    if not isinstance(data, dict):
+        return data
+    raw = data.get("raw")
+    val = data.get("data")
+    needs_copy = isinstance(raw, bytes | bytearray) or (
+        val is not None and not isinstance(val, _models.Value)
+    )
+    if not needs_copy:
+        return data
+    out = dict(data)
+    if isinstance(raw, bytes | bytearray):
+        out["raw"] = base64.b64encode(bytes(raw)).decode("ascii")
+    if val is not None and not isinstance(val, _models.Value):
+        out["data"] = _models.Value(root=val)
+    return out
+
+
+_INPUT_COERCERS[_models.Part] = _coerce_part_inputs
+
+
+# Model-level coercers only run on construction (``model_validate`` path).
+# ``validate_assignment`` is a separate Pydantic path that only re-validates
+# the single changed field against its declared type, so a later
+# ``part.raw = b"..."`` would bypass the coercer above and Pydantic's default
+# ``bytes -> str`` coercion would silently UTF-8-decode the bytes (wrong —
+# ``raw`` requires base64 on the wire). Override ``__setattr__`` on Part to
+# pre-coerce the same two inputs before Pydantic's validate_assignment runs.
+_part_original_setattr = _models.Part.__setattr__
+
+
+def _part_setattr(self: Any, name: str, value: Any) -> None:
+    if name == "raw" and isinstance(value, bytes | bytearray):
+        value = base64.b64encode(bytes(value)).decode("ascii")
+    elif name == "data" and value is not None and not isinstance(value, _models.Value):
+        value = _models.Value(root=value)
+    _part_original_setattr(self, name, value)
+
+
+setattr(_models.Part, "__setattr__", _part_setattr)  # noqa: B010

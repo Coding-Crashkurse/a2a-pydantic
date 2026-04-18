@@ -134,6 +134,25 @@ v10.TaskState("Submitted")              # short mixed case
 # ... all return TaskState.task_state_submitted
 ```
 
+**`v10.Part` takes Python-native inputs.** Three papercuts collapse to
+one-liners as of 0.0.7:
+
+```python
+# bytes auto-base64-encode into Part.raw (no more manual base64.b64encode)
+v10.Part(raw=b"\x00\x01binary", media_type="application/octet-stream")
+
+# dicts / lists / scalars auto-wrap in v10.Value (no more Value(root=...))
+v10.Part(data={"k": "v"})
+
+# filename / media_type default to None (was ""), so `if p.filename:` works
+v10.Part(text="hi").filename is None
+```
+
+`validate_assignment=True` means the bytes / dict coercions apply to
+later mutation too, not just construction. Before 0.0.7 this was a
+footgun: `v10.Part(raw=b"\x00\x01")` silently UTF-8-decoded the bytes
+into `Part.raw`, corrupting binary payloads.
+
 ## Basic usage — v0.3 models
 
 ```python
@@ -206,10 +225,11 @@ surface them to clients, or fail fast in tests. Typical cases:
 - `APIKeySecurityScheme.location` outside `query|header|cookie` — coerced
   to `header` with warning
 
-**Upward conversion (v0.3 → v1.0) is intentionally not provided.** v1.0
-adds fields that have no v0.3 source (tenant, protocol_binding vs
-protocol_version split, AwareDatetime timestamps, ...) and inventing
-defaults for them would silently corrupt data.
+**Upward conversion (v0.3 → v1.0)** is also provided, see
+[Upgrading v0.3 → v1.0](#upgrading-v03--v10) below. The fields v1.0
+adds with no v0.3 source (tenant, protocol_binding vs protocol_version
+split, AwareDatetime timestamps, ...) default to `None` / `[]` / `""`
+with optional context kwargs for callers who know what to inject.
 
 **Overriding the synthetic `final` flag on status events.** v1.0
 `TaskStatusUpdateEvent` has no `final` field but v0.3 requires one, so
@@ -223,6 +243,32 @@ warning would otherwise fire once per SSE event:
 out = convert_to_v03(event, assume_final=is_terminal)
 # out.final == is_terminal, no "defaulting final=False" warning
 ```
+
+### What's covered
+
+`convert_to_v03` handles every data-carrying model pair:
+
+| v1.0 | v0.3 | Notes |
+|---|---|---|
+| `SendMessageRequest` | `MessageSendParams` | v1.0 has no JSON-RPC envelope layer |
+| `SendMessageConfiguration` | `MessageSendConfiguration` | `return_immediately` → `blocking` (inverted) |
+| `Message`, `Part`, `Artifact`, `Task`, `TaskStatus` | same names | `Part` fan-out: `text > raw > url > data` |
+| `TaskStatusUpdateEvent` | same | `final=False` default + warning |
+| `TaskArtifactUpdateEvent` | same | – |
+| `TaskPushNotificationConfig` | outer + inner `PushNotificationConfig` | flat → nested |
+| `AuthenticationInfo` | `PushNotificationAuthenticationInfo` | `scheme: str` → `schemes: [scheme]` |
+| `AgentCard` | `AgentCard` | `supported_interfaces[0]` → `url`/`preferred_transport`, rest → `additional_interfaces` |
+| `AgentInterface/Provider/Extension/Capabilities/Skill/CardSignature` | same | – |
+| `SecurityScheme` envelope | `SecurityScheme` RootModel | pick-one, warn on multi |
+| `APIKeySecurityScheme` | same | `location: str` → `in_: In` enum |
+| `OAuthFlows` + all flows | same | `device_code` dropped |
+| `Role`, `TaskState` enums | same | Protobuf → lowercase mapping |
+| `GetTaskRequest` | `TaskQueryParams` | – |
+| `CancelTaskRequest` | `TaskIdParams` | – |
+| `SubscribeToTaskRequest` | `TaskIdParams` | – |
+| `GetTaskPushNotificationConfigRequest` | `GetTaskPushNotificationConfigParams` | `task_id`/`id` flattened |
+| `DeleteTaskPushNotificationConfigRequest` | `DeleteTaskPushNotificationConfigParams` | `task_id`/`id` flattened |
+| `ListTaskPushNotificationConfigsRequest` | `ListTaskPushNotificationConfigParams` | pagination fields dropped with warning |
 
 ## Upgrading v0.3 → v1.0
 
@@ -292,86 +338,6 @@ Every lossy step emits a `UserWarning`. Typical cases:
 | `SecurityScheme` (RootModel) | `SecurityScheme` (envelope) | one-of dispatch, five variants |
 | `APIKey/HTTPAuth/MutualTLS/OAuth2/OpenIdConnect` schemes | same | `In` enum → lowercase string |
 | `OAuthFlows` + all 4 flows | same | `pkce_required=False` injected on auth-code flow |
-
-## v10.Part construction / extraction helpers
-
-Building a `v10.Part` from scratch means either wrapping dicts in
-`v10.Value`, base64-encoding bytes, or remembering the flat-oneof shape.
-`a2a_pydantic.v10.parts` provides the obvious shortcuts so call sites
-read as natural Python:
-
-```python
-from a2a_pydantic.v10.parts import (
-    text_part, data_part, file_part_bytes, file_part_url,
-    extract_text, extract_data, extract_files, part_kind, FileInfo,
-)
-
-msg = v10.Message(
-    message_id="m-1",
-    role=v10.Role.role_user,
-    parts=[
-        text_part("Analyze this invoice."),
-        file_part_bytes(pdf_bytes, media_type="application/pdf", filename="inv.pdf"),
-        data_part({"currency": "EUR", "total": 42.0}),
-    ],
-)
-```
-
-Construction helpers handle the conversions automatically:
-
-| Helper | Does |
-|---|---|
-| `text_part(text, *, media_type=None, metadata=None)` | direct `Part(text=...)` |
-| `data_part(data, *, media_type="application/json", metadata=None)` | wraps `data` in `v10.Value` |
-| `file_part_bytes(content, *, media_type=None, filename=None, metadata=None)` | base64-encodes `content` into `Part.raw` |
-| `file_part_url(url, *, media_type=None, filename=None, metadata=None)` | direct `Part(url=...)` |
-
-Extractors go the other way, including base64-decoding and empty-string
-normalization:
-
-```python
-# Agent-side inbox processing
-if part_kind(msg.parts[0]) == "text":
-    text = extract_text(msg.parts)         # concatenated strings
-    blobs = extract_data(msg.parts)        # unwrapped from Value
-    files = extract_files(msg.parts)       # list[FileInfo]
-
-for f in files:
-    if f.content is not None:
-        save(f.content, name=f.filename)   # filename is None, not ""
-    elif f.url is not None:
-        download(f.url)
-```
-
-`FileInfo` is a frozen dataclass `(content, url, filename, media_type)`
-with the empty-string proto3 defaults flipped back to `None`, so the
-natural `if f.filename:` idiom works.
-
-### What's covered
-
-`convert_to_v03` handles every data-carrying model pair:
-
-| v1.0 | v0.3 | Notes |
-|---|---|---|
-| `SendMessageRequest` | `MessageSendParams` | v1.0 has no JSON-RPC envelope layer |
-| `SendMessageConfiguration` | `MessageSendConfiguration` | `return_immediately` → `blocking` (inverted) |
-| `Message`, `Part`, `Artifact`, `Task`, `TaskStatus` | same names | `Part` fan-out: `text > raw > url > data` |
-| `TaskStatusUpdateEvent` | same | `final=False` default + warning |
-| `TaskArtifactUpdateEvent` | same | – |
-| `TaskPushNotificationConfig` | outer + inner `PushNotificationConfig` | flat → nested |
-| `AuthenticationInfo` | `PushNotificationAuthenticationInfo` | `scheme: str` → `schemes: [scheme]` |
-| `AgentCard` | `AgentCard` | `supported_interfaces[0]` → `url`/`preferred_transport`, rest → `additional_interfaces` |
-| `AgentInterface/Provider/Extension/Capabilities/Skill/CardSignature` | same | – |
-| `SecurityScheme` envelope | `SecurityScheme` RootModel | pick-one, warn on multi |
-| `APIKeySecurityScheme` | same | `location: str` → `in_: In` enum |
-| `OAuthFlows` + all flows | same | `device_code` dropped |
-| `Role`, `TaskState` enums | same | Protobuf → lowercase mapping |
-| `GetTaskRequest` | `TaskQueryParams` | – |
-| `CancelTaskRequest` | `TaskIdParams` | – |
-| `SubscribeToTaskRequest` | `TaskIdParams` | – |
-| `GetTaskPushNotificationConfigRequest` | `GetTaskPushNotificationConfigParams` | `task_id`/`id` flattened |
-| `DeleteTaskPushNotificationConfigRequest` | `DeleteTaskPushNotificationConfigParams` | `task_id`/`id` flattened |
-| `ListTaskPushNotificationConfigsRequest` | `ListTaskPushNotificationConfigParams` | pagination fields dropped with warning |
 
 ## Bridging v1.0 → a2a-sdk protobuf
 
@@ -658,8 +624,7 @@ src/a2a_pydantic/
 ├── v03/
 │   └── models.py        # v0.3 models (A2A JSON Schema)
 └── v10/
-    ├── models.py        # v1.0 models (A2A JSON Schema, extracted from .proto)
-    └── parts.py         # v10.Part construction / extraction helpers
+    └── models.py        # v1.0 models (A2A JSON Schema, extracted from .proto)
 ```
 
 v10 models are regenerated via `scripts/generate_v10.ps1`, which pulls the
