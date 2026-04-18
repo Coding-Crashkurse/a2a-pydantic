@@ -47,6 +47,10 @@ class A2ABaseModel(BaseModel):
         validate_by_alias=True,
         serialize_by_alias=True,
         alias_generator=to_camel_custom,
+        # Re-validate on attribute assignment so `task.metadata = {"a": 1}`
+        # is coerced back to the declared type (e.g. Struct) instead of
+        # silently storing a plain dict that later crashes convert_to_v03.
+        validate_assignment=True,
     )
 
     @model_validator(mode="after")

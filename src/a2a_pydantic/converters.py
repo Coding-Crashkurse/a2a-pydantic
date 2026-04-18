@@ -28,6 +28,7 @@ can see exactly which data was lost. Typical capture pattern::
 from __future__ import annotations
 
 import warnings
+from contextvars import ContextVar
 from functools import singledispatch
 from typing import Any, overload
 
@@ -38,6 +39,14 @@ __all__ = ["convert_to_v03"]
 
 def _warn(message: str) -> None:
     warnings.warn(message, UserWarning, stacklevel=3)
+
+
+# Per-call override for the synthetic ``final`` flag on v0.3
+# TaskStatusUpdateEvent. v1.0 dropped the field, so the converter normally
+# defaults to ``False`` and warns. A caller that already knows whether the
+# event is terminal (e.g. a framework with its own TerminalMarker) can
+# pass ``assume_final=True/False`` to set the value and suppress the warning.
+_ASSUME_FINAL: ContextVar[bool | None] = ContextVar("_assume_final", default=None)
 
 
 def _struct_to_dict(struct: v10.Struct | None) -> dict[str, Any] | None:
@@ -194,13 +203,18 @@ def _task(t: v10.Task) -> v03.Task:
 def _task_status_update_event(
     e: v10.TaskStatusUpdateEvent,
 ) -> v03.TaskStatusUpdateEvent:
-    _warn(
-        "v10.TaskStatusUpdateEvent has no 'final' field; defaulting "
-        "v03.TaskStatusUpdateEvent.final=False"
-    )
+    override = _ASSUME_FINAL.get()
+    if override is None:
+        _warn(
+            "v10.TaskStatusUpdateEvent has no 'final' field; defaulting "
+            "v03.TaskStatusUpdateEvent.final=False"
+        )
+        final = False
+    else:
+        final = override
     return v03.TaskStatusUpdateEvent(
         context_id=e.context_id,
-        final=False,
+        final=final,
         metadata=_struct_to_dict(e.metadata),
         status=_task_status(e.status),
         task_id=e.task_id,
@@ -653,79 +667,8 @@ def _agent_card(c: v10.AgentCard) -> v03.AgentCard:
     )
 
 
-@overload
-def convert_to_v03(obj: v10.SendMessageRequest) -> v03.MessageSendParams: ...
-@overload
-def convert_to_v03(obj: v10.SendMessageConfiguration) -> v03.MessageSendConfiguration: ...
-@overload
-def convert_to_v03(obj: v10.Message) -> v03.Message: ...
-@overload
-def convert_to_v03(obj: v10.Part) -> v03.Part: ...
-@overload
-def convert_to_v03(obj: v10.Artifact) -> v03.Artifact: ...
-@overload
-def convert_to_v03(obj: v10.Task) -> v03.Task: ...
-@overload
-def convert_to_v03(obj: v10.TaskStatus) -> v03.TaskStatus: ...
-@overload
-def convert_to_v03(obj: v10.TaskStatusUpdateEvent) -> v03.TaskStatusUpdateEvent: ...
-@overload
-def convert_to_v03(obj: v10.TaskArtifactUpdateEvent) -> v03.TaskArtifactUpdateEvent: ...
-@overload
-def convert_to_v03(obj: v10.AuthenticationInfo) -> v03.PushNotificationAuthenticationInfo: ...
-@overload
-def convert_to_v03(obj: v10.TaskPushNotificationConfig) -> v03.TaskPushNotificationConfig: ...
-@overload
-def convert_to_v03(obj: v10.AgentCard) -> v03.AgentCard: ...
-@overload
-def convert_to_v03(obj: v10.AgentCapabilities) -> v03.AgentCapabilities: ...
-@overload
-def convert_to_v03(obj: v10.AgentInterface) -> v03.AgentInterface: ...
-@overload
-def convert_to_v03(obj: v10.AgentProvider) -> v03.AgentProvider: ...
-@overload
-def convert_to_v03(obj: v10.AgentExtension) -> v03.AgentExtension: ...
-@overload
-def convert_to_v03(obj: v10.AgentSkill) -> v03.AgentSkill: ...
-@overload
-def convert_to_v03(obj: v10.AgentCardSignature) -> v03.AgentCardSignature: ...
-@overload
-def convert_to_v03(obj: v10.SecurityScheme) -> v03.SecurityScheme: ...
-@overload
-def convert_to_v03(obj: v10.OAuthFlows) -> v03.OAuthFlows: ...
-@overload
-def convert_to_v03(obj: v10.GetTaskRequest) -> v03.TaskQueryParams: ...
-@overload
-def convert_to_v03(obj: v10.CancelTaskRequest) -> v03.TaskIdParams: ...
-@overload
-def convert_to_v03(obj: v10.SubscribeToTaskRequest) -> v03.TaskIdParams: ...
-@overload
-def convert_to_v03(
-    obj: v10.GetTaskPushNotificationConfigRequest,
-) -> v03.GetTaskPushNotificationConfigParams: ...
-@overload
-def convert_to_v03(
-    obj: v10.DeleteTaskPushNotificationConfigRequest,
-) -> v03.DeleteTaskPushNotificationConfigParams: ...
-@overload
-def convert_to_v03(
-    obj: v10.ListTaskPushNotificationConfigsRequest,
-) -> v03.ListTaskPushNotificationConfigParams: ...
 @singledispatch
-def convert_to_v03(obj: Any) -> Any:
-    """Downgrade a v1.0 A2A model to its v0.3 equivalent.
-
-    Dispatches on the runtime type of ``obj``. Raises :class:`TypeError`
-    for unsupported types rather than silently returning the input, so
-    callers notice when they hand in something the converter doesn't
-    know about.
-
-    Every lossy step (``tenant`` fields, multi-payload parts,
-    ``TaskStatusUpdateEvent.final`` default, dropped OAuth flows, ...)
-    emits a ``UserWarning``. Wrap the call in
-    :func:`warnings.catch_warnings` to capture them for logging or
-    returning to clients.
-    """
+def _dispatch_to_v03(obj: Any) -> Any:
     raise TypeError(f"No v10 -> v03 converter registered for {type(obj).__name__}")
 
 
@@ -757,4 +700,122 @@ for _v10_type, _fn in {
     v10.DeleteTaskPushNotificationConfigRequest: _delete_task_push_notification_config_request,
     v10.ListTaskPushNotificationConfigsRequest: _list_task_push_notification_configs_request,
 }.items():
-    convert_to_v03.register(_v10_type)(_fn)  # type: ignore[attr-defined]
+    _dispatch_to_v03.register(_v10_type)(_fn)  # type: ignore[arg-type]
+
+
+@overload
+def convert_to_v03(
+    obj: v10.SendMessageRequest, *, assume_final: bool | None = None
+) -> v03.MessageSendParams: ...
+@overload
+def convert_to_v03(
+    obj: v10.SendMessageConfiguration, *, assume_final: bool | None = None
+) -> v03.MessageSendConfiguration: ...
+@overload
+def convert_to_v03(obj: v10.Message, *, assume_final: bool | None = None) -> v03.Message: ...
+@overload
+def convert_to_v03(obj: v10.Part, *, assume_final: bool | None = None) -> v03.Part: ...
+@overload
+def convert_to_v03(obj: v10.Artifact, *, assume_final: bool | None = None) -> v03.Artifact: ...
+@overload
+def convert_to_v03(obj: v10.Task, *, assume_final: bool | None = None) -> v03.Task: ...
+@overload
+def convert_to_v03(obj: v10.TaskStatus, *, assume_final: bool | None = None) -> v03.TaskStatus: ...
+@overload
+def convert_to_v03(
+    obj: v10.TaskStatusUpdateEvent, *, assume_final: bool | None = None
+) -> v03.TaskStatusUpdateEvent: ...
+@overload
+def convert_to_v03(
+    obj: v10.TaskArtifactUpdateEvent, *, assume_final: bool | None = None
+) -> v03.TaskArtifactUpdateEvent: ...
+@overload
+def convert_to_v03(
+    obj: v10.AuthenticationInfo, *, assume_final: bool | None = None
+) -> v03.PushNotificationAuthenticationInfo: ...
+@overload
+def convert_to_v03(
+    obj: v10.TaskPushNotificationConfig, *, assume_final: bool | None = None
+) -> v03.TaskPushNotificationConfig: ...
+@overload
+def convert_to_v03(obj: v10.AgentCard, *, assume_final: bool | None = None) -> v03.AgentCard: ...
+@overload
+def convert_to_v03(
+    obj: v10.AgentCapabilities, *, assume_final: bool | None = None
+) -> v03.AgentCapabilities: ...
+@overload
+def convert_to_v03(
+    obj: v10.AgentInterface, *, assume_final: bool | None = None
+) -> v03.AgentInterface: ...
+@overload
+def convert_to_v03(
+    obj: v10.AgentProvider, *, assume_final: bool | None = None
+) -> v03.AgentProvider: ...
+@overload
+def convert_to_v03(
+    obj: v10.AgentExtension, *, assume_final: bool | None = None
+) -> v03.AgentExtension: ...
+@overload
+def convert_to_v03(obj: v10.AgentSkill, *, assume_final: bool | None = None) -> v03.AgentSkill: ...
+@overload
+def convert_to_v03(
+    obj: v10.AgentCardSignature, *, assume_final: bool | None = None
+) -> v03.AgentCardSignature: ...
+@overload
+def convert_to_v03(
+    obj: v10.SecurityScheme, *, assume_final: bool | None = None
+) -> v03.SecurityScheme: ...
+@overload
+def convert_to_v03(obj: v10.OAuthFlows, *, assume_final: bool | None = None) -> v03.OAuthFlows: ...
+@overload
+def convert_to_v03(
+    obj: v10.GetTaskRequest, *, assume_final: bool | None = None
+) -> v03.TaskQueryParams: ...
+@overload
+def convert_to_v03(
+    obj: v10.CancelTaskRequest, *, assume_final: bool | None = None
+) -> v03.TaskIdParams: ...
+@overload
+def convert_to_v03(
+    obj: v10.SubscribeToTaskRequest, *, assume_final: bool | None = None
+) -> v03.TaskIdParams: ...
+@overload
+def convert_to_v03(
+    obj: v10.GetTaskPushNotificationConfigRequest, *, assume_final: bool | None = None
+) -> v03.GetTaskPushNotificationConfigParams: ...
+@overload
+def convert_to_v03(
+    obj: v10.DeleteTaskPushNotificationConfigRequest, *, assume_final: bool | None = None
+) -> v03.DeleteTaskPushNotificationConfigParams: ...
+@overload
+def convert_to_v03(
+    obj: v10.ListTaskPushNotificationConfigsRequest, *, assume_final: bool | None = None
+) -> v03.ListTaskPushNotificationConfigParams: ...
+def convert_to_v03(obj: Any, *, assume_final: bool | None = None) -> Any:
+    """Downgrade a v1.0 A2A model to its v0.3 equivalent.
+
+    Dispatches on the runtime type of ``obj``. Raises :class:`TypeError`
+    for unsupported types rather than silently returning the input, so
+    callers notice when they hand in something the converter doesn't
+    know about.
+
+    Every lossy step (``tenant`` fields, multi-payload parts,
+    ``TaskStatusUpdateEvent.final`` default, dropped OAuth flows, ...)
+    emits a ``UserWarning``. Wrap the call in
+    :func:`warnings.catch_warnings` to capture them for logging or
+    returning to clients.
+
+    ``assume_final`` is only consulted for :class:`v10.TaskStatusUpdateEvent`
+    and overrides the synthetic ``final`` flag that v0.3 requires but v1.0
+    dropped. Pass ``True`` or ``False`` when the caller has already decided
+    (for example from a framework's own terminal-marker wrapper) to set
+    the value AND suppress the "defaulting final=False" warning. Leave as
+    ``None`` to keep the default-and-warn behavior.
+    """
+    if assume_final is None:
+        return _dispatch_to_v03(obj)
+    token = _ASSUME_FINAL.set(assume_final)
+    try:
+        return _dispatch_to_v03(obj)
+    finally:
+        _ASSUME_FINAL.reset(token)

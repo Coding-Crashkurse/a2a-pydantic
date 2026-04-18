@@ -92,6 +92,45 @@ on the wire (via `A2ABaseModel`'s alias generator).
 > generator output faithful to preserve round-trip fidelity with pb2.
 > Treat `''` and `None` as equivalent for serialization purposes.
 
+### Ergonomics
+
+A few small things the package does to make the generated models less
+painful to work with day to day:
+
+**Assigning a plain dict to `metadata` works.** `task.metadata` is typed
+as `v10.Struct | None`, but `validate_assignment=True` on the base class
+re-validates on every attribute set, so the dict is coerced back to
+`Struct` transparently:
+
+```python
+task.metadata = {"trace_id": "abc", "retries": 2}
+assert isinstance(task.metadata, v10.Struct)   # auto-coerced
+convert_to_v03(task)                           # still works
+```
+
+Before 0.0.5 this stored the raw dict and later crashed `convert_to_v03`
+with `AttributeError: 'dict' object has no attribute 'model_dump'`.
+
+**`v10.Timestamp` is orderable.** `__lt__`/`__le__`/`__gt__`/`__ge__`
+forward to the underlying `AwareDatetime`, so you can sort tasks by
+status timestamp directly:
+
+```python
+sorted(tasks, key=lambda t: t.status.timestamp)
+```
+
+**`v10.TaskState` takes case-insensitive values.** The canonical wire
+form is uppercase (`TASK_STATE_SUBMITTED`), but the short/mixed/lowercase
+forms all resolve to the same member — handy when you store states in
+Redis/SQL and don't want a normalization pass at every I/O boundary:
+
+```python
+v10.TaskState("TASK_STATE_SUBMITTED")   # canonical
+v10.TaskState("submitted")              # short lowercase
+v10.TaskState("Submitted")              # short mixed case
+# ... all return TaskState.task_state_submitted
+```
+
 ## Basic usage — v0.3 models
 
 ```python
@@ -168,6 +207,19 @@ surface them to clients, or fail fast in tests. Typical cases:
 adds fields that have no v0.3 source (tenant, protocol_binding vs
 protocol_version split, AwareDatetime timestamps, ...) and inventing
 defaults for them would silently corrupt data.
+
+**Overriding the synthetic `final` flag on status events.** v1.0
+`TaskStatusUpdateEvent` has no `final` field but v0.3 requires one, so
+the converter defaults to `False` and emits a warning. If your
+framework already knows whether the event is terminal (e.g. from a
+wrapper marker) you can pass `assume_final=True/False` to set the value
+AND suppress the warning. Useful in streaming servers where the default
+warning would otherwise fire once per SSE event:
+
+```python
+out = convert_to_v03(event, assume_final=is_terminal)
+# out.final == is_terminal, no "defaulting final=False" warning
+```
 
 ### What's covered
 
