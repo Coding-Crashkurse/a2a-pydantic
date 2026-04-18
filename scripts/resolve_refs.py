@@ -14,7 +14,25 @@ Fixes applied:
 import json
 import re
 import sys
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
+
+
+def walk_dicts(obj: Any) -> Iterator[dict]:
+    """Pre-order DFS yielding every dict node in the tree.
+
+    Callers that mutate nodes must materialize the iterator first
+    (``list(walk_dicts(schema))``); mutating a dict's keys while its
+    ``.values()`` view is being iterated raises ``RuntimeError``.
+    """
+    if isinstance(obj, dict):
+        yield obj
+        for v in obj.values():
+            yield from walk_dicts(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            yield from walk_dicts(item)
 
 
 def slugify(name: str) -> str:
@@ -24,74 +42,45 @@ def slugify(name: str) -> str:
 def rename_definitions(schema: dict) -> None:
     """Rename definition keys to remove spaces, and rewrite internal $refs."""
     defs = schema.get("definitions", {})
-    rename_map: dict[str, str] = {}
-    for old in list(defs.keys()):
-        new = slugify(old)
-        if new != old:
-            rename_map[old] = new
+    rename_map = {old: slugify(old) for old in defs if slugify(old) != old}
     if not rename_map:
         return
 
-    new_defs: dict = {}
-    for old, body in defs.items():
-        new_defs[rename_map.get(old, old)] = body
-    schema["definitions"] = new_defs
+    schema["definitions"] = {rename_map.get(k, k): v for k, v in defs.items()}
 
-    def rewrite(obj):
-        if isinstance(obj, dict):
-            if "$ref" in obj and isinstance(obj["$ref"], str):
-                ref = obj["$ref"]
-                if ref.startswith("#/definitions/"):
-                    key = ref[len("#/definitions/"):]
-                    if key in rename_map:
-                        obj["$ref"] = f"#/definitions/{rename_map[key]}"
-            for v in obj.values():
-                rewrite(v)
-        elif isinstance(obj, list):
-            for item in obj:
-                rewrite(item)
-
-    rewrite(schema)
+    for node in list(walk_dicts(schema)):
+        ref = node.get("$ref")
+        if not isinstance(ref, str) or not ref.startswith("#/definitions/"):
+            continue
+        key = ref[len("#/definitions/"):]
+        if key in rename_map:
+            node["$ref"] = f"#/definitions/{rename_map[key]}"
 
 
 def build_ref_map(definitions: dict) -> dict[str, str]:
-    ref_map: dict[str, str] = {}
-    for def_name in definitions:
-        for prefix in ("lf.a2a.v1.", "google.protobuf."):
-            ref_map[f"{prefix}{def_name}.jsonschema.json"] = f"#/definitions/{def_name}"
-    return ref_map
+    return {
+        f"{prefix}{name}.jsonschema.json": f"#/definitions/{name}"
+        for name in definitions
+        for prefix in ("lf.a2a.v1.", "google.protobuf.")
+    }
 
 
-def resolve_refs(obj, ref_map: dict[str, str]):
-    if isinstance(obj, dict):
-        if "$ref" in obj and obj["$ref"] in ref_map:
-            obj["$ref"] = ref_map[obj["$ref"]]
-        for v in obj.values():
-            resolve_refs(v, ref_map)
-    elif isinstance(obj, list):
-        for item in obj:
-            resolve_refs(item, ref_map)
+def resolve_refs(obj, ref_map: dict[str, str]) -> None:
+    for node in list(walk_dicts(obj)):
+        ref = node.get("$ref")
+        if ref in ref_map:
+            node["$ref"] = ref_map[ref]
 
 
-def strip_additional_properties(obj):
-    if isinstance(obj, dict):
-        if obj.get("additionalProperties") is False:
-            del obj["additionalProperties"]
-        for v in obj.values():
-            strip_additional_properties(v)
-    elif isinstance(obj, list):
-        for item in obj:
-            strip_additional_properties(item)
+def strip_additional_properties(obj) -> None:
+    for node in list(walk_dicts(obj)):
+        if node.get("additionalProperties") is False:
+            del node["additionalProperties"]
 
 
-def strip_pattern_properties(obj):
-    if isinstance(obj, dict):
-        obj.pop("patternProperties", None)
-        for v in obj.values():
-            strip_pattern_properties(v)
-    elif isinstance(obj, list):
-        for item in obj:
-            strip_pattern_properties(item)
+def strip_pattern_properties(obj) -> None:
+    for node in list(walk_dicts(obj)):
+        node.pop("patternProperties", None)
 
 
 def _is_proto_int_anyof(any_of: list) -> bool:
@@ -110,79 +99,72 @@ def _is_proto_enum_anyof(any_of: list) -> bool:
 
 
 def _extract_enum_values(any_of: list) -> list[str]:
-    values = []
+    values: list[str] = []
     for v in any_of:
         if isinstance(v, dict) and "enum" in v:
             values.extend(v["enum"])
     return values
 
 
-def simplify_anyof(obj):
-    if isinstance(obj, dict):
-        if "anyOf" in obj and isinstance(obj["anyOf"], list):
-            any_of = obj["anyOf"]
-
-            if _is_proto_enum_anyof(any_of):
-                enum_vals = _extract_enum_values(any_of)
-                desc = obj.get("description", "")
-                title = obj.get("title")
-                default = obj.get("default")
-                obj.clear()
-                obj["type"] = "string"
-                obj["enum"] = enum_vals
-                if desc:
-                    obj["description"] = desc
-                if title:
-                    obj["title"] = title
-                # Proto enums default to integer 0 (= UNSPECIFIED). We drop
-                # UNSPECIFIED from the Python enum because Python already has
-                # `None` for "unset", so an integer default has no valid target
-                # on our side — keep the field unset. String defaults are
-                # preserved only when they actually match one of the kept enum
-                # values; an unmappable string is almost certainly a schema
-                # drift we want to hear about, so we log it loudly instead of
-                # silently dropping (silent drops are what produced the
-                # `default: 0 -> "TASK_STATE_SUBMITTED"` bug in the first place).
-                if default is None or isinstance(default, int):
-                    pass
-                elif isinstance(default, str) and default in enum_vals:
-                    obj["default"] = default
-                else:
-                    print(
-                        f"resolve_refs: dropping unmappable enum default "
-                        f"{default!r} (kept enum values: {enum_vals})",
-                        file=sys.stderr,
-                    )
-
-            elif _is_proto_int_anyof(any_of):
-                int_schema = next(
-                    v for v in any_of if isinstance(v, dict) and v.get("type") == "integer"
-                )
-                desc = obj.get("description", "")
-                default = obj.get("default")
-                obj.clear()
-                obj["type"] = "integer"
-                if desc:
-                    obj["description"] = desc
-                if default is not None:
-                    obj["default"] = default
-
-        for v in obj.values():
-            simplify_anyof(v)
-    elif isinstance(obj, list):
-        for item in obj:
-            simplify_anyof(item)
+def _collapse_enum_anyof(node: dict) -> None:
+    any_of = node["anyOf"]
+    enum_vals = _extract_enum_values(any_of)
+    desc = node.get("description", "")
+    title = node.get("title")
+    default = node.get("default")
+    node.clear()
+    node["type"] = "string"
+    node["enum"] = enum_vals
+    if desc:
+        node["description"] = desc
+    if title:
+        node["title"] = title
+    # Proto enums default to integer 0 (= UNSPECIFIED). We drop UNSPECIFIED
+    # from the Python enum because Python already has `None` for "unset", so
+    # an integer default has no valid target on our side — keep the field
+    # unset. String defaults are preserved only when they actually match one
+    # of the kept enum values; an unmappable string is almost certainly a
+    # schema drift we want to hear about, so we log it loudly instead of
+    # silently dropping (silent drops are what produced the
+    # `default: 0 -> "TASK_STATE_SUBMITTED"` bug in the first place).
+    if default is None or isinstance(default, int):
+        return
+    if isinstance(default, str) and default in enum_vals:
+        node["default"] = default
+        return
+    print(
+        f"resolve_refs: dropping unmappable enum default "
+        f"{default!r} (kept enum values: {enum_vals})",
+        file=sys.stderr,
+    )
 
 
-def strip_nested_schema(obj):
-    if isinstance(obj, dict):
-        if "$schema" in obj and "definitions" not in obj:
-            del obj["$schema"]
-        for v in obj.values():
-            strip_nested_schema(v)
-    elif isinstance(obj, list):
-        for item in obj:
-            strip_nested_schema(item)
+def _collapse_int_anyof(node: dict) -> None:
+    desc = node.get("description", "")
+    default = node.get("default")
+    node.clear()
+    node["type"] = "integer"
+    if desc:
+        node["description"] = desc
+    if default is not None:
+        node["default"] = default
+
+
+def simplify_anyof(obj) -> None:
+    for node in list(walk_dicts(obj)):
+        any_of = node.get("anyOf")
+        if not isinstance(any_of, list):
+            continue
+        if _is_proto_enum_anyof(any_of):
+            _collapse_enum_anyof(node)
+        elif _is_proto_int_anyof(any_of):
+            _collapse_int_anyof(node)
+
+
+def strip_nested_schema(obj) -> None:
+    for node in list(walk_dicts(obj)):
+        if "$schema" in node and "definitions" not in node:
+            del node["$schema"]
 
 
 def strip_title_spaces(schema: dict) -> None:
@@ -192,19 +174,14 @@ def strip_title_spaces(schema: dict) -> None:
             body["title"] = slugify(body["title"])
 
 
-def strip_string_patterns(obj):
-    """Drop `pattern` constraints on string fields - we don't want `constr()` wrappers."""
-    if isinstance(obj, dict):
-        if obj.get("type") == "string" and "pattern" in obj:
-            del obj["pattern"]
-        for v in obj.values():
-            strip_string_patterns(v)
-    elif isinstance(obj, list):
-        for item in obj:
-            strip_string_patterns(item)
+def strip_string_patterns(obj) -> None:
+    """Drop `pattern` on string fields — we don't want `constr()` wrappers."""
+    for node in list(walk_dicts(obj)):
+        if node.get("type") == "string" and "pattern" in node:
+            del node["pattern"]
 
 
-def clean_descriptions(obj):
+def clean_descriptions(obj) -> None:
     """Trim per-line leading space inherited from proto `//` comments.
 
     The proto->jsonschema step produces descriptions like:
@@ -212,15 +189,10 @@ def clean_descriptions(obj):
     where every continuation line starts with a single space. Strip that leading
     space so the rendered docstrings match the v0.3 style.
     """
-    if isinstance(obj, dict):
-        desc = obj.get("description")
+    for node in list(walk_dicts(obj)):
+        desc = node.get("description")
         if isinstance(desc, str) and "\n " in desc:
-            obj["description"] = "\n".join(line.lstrip() for line in desc.split("\n"))
-        for v in obj.values():
-            clean_descriptions(v)
-    elif isinstance(obj, list):
-        for item in obj:
-            clean_descriptions(item)
+            node["description"] = "\n".join(line.lstrip() for line in desc.split("\n"))
 
 
 # Proto3 JSON Schema has no `required` arrays - every field is emitted as
@@ -419,30 +391,23 @@ def extract_task_state(schema: dict) -> None:
     collapse into a single `TaskState` class in the generated models."""
     task_state_set = set(_TASK_STATE_VALUES)
 
-    def rewrite(obj):
-        if isinstance(obj, dict):
-            if (
-                obj.get("type") == "string"
-                and isinstance(obj.get("enum"), list)
-                and set(obj["enum"]) == task_state_set
-            ):
-                desc = obj.get("description")
-                default = obj.get("default")
-                obj.clear()
-                obj["$ref"] = "#/definitions/TaskState"
-                if desc:
-                    obj["description"] = desc
-                if default is not None:
-                    obj["default"] = default
-                return
-            for v in obj.values():
-                rewrite(v)
-        elif isinstance(obj, list):
-            for item in obj:
-                rewrite(item)
-
-    # Walk existing definitions first so we don't rewrite the enum we're about to add.
-    rewrite(schema)
+    # Materialize before adding the TaskState definition below so we don't
+    # rewrite the enum we're about to add.
+    for node in list(walk_dicts(schema)):
+        if not (
+            node.get("type") == "string"
+            and isinstance(node.get("enum"), list)
+            and set(node["enum"]) == task_state_set
+        ):
+            continue
+        desc = node.get("description")
+        default = node.get("default")
+        node.clear()
+        node["$ref"] = "#/definitions/TaskState"
+        if desc:
+            node["description"] = desc
+        if default is not None:
+            node["default"] = default
 
     schema.setdefault("definitions", {})["TaskState"] = {
         "title": "TaskState",
@@ -452,20 +417,16 @@ def extract_task_state(schema: dict) -> None:
     }
 
 
-def main():
-    if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} <schema.json> [output.json]")
-        sys.exit(1)
+def process_schema(schema: dict) -> None:
+    """Run the full preprocessing pipeline on ``schema`` in place.
 
-    src = Path(sys.argv[1])
-    dst = Path(sys.argv[2]) if len(sys.argv) > 2 else src
-
-    schema = json.loads(src.read_text(encoding="utf-8"))
-
+    Raises ``SystemExit`` if the output still contains unresolved external
+    refs (``*.jsonschema.json``) — that means upstream added definition
+    names we don't know how to rewrite, and silently shipping a schema
+    with unresolved refs would produce broken generated models.
+    """
     rename_definitions(schema)
-    definitions = schema.get("definitions", {})
-
-    ref_map = build_ref_map(definitions)
+    ref_map = build_ref_map(schema.get("definitions", {}))
     resolve_refs(schema, ref_map)
     strip_additional_properties(schema)
     strip_pattern_properties(schema)
@@ -479,11 +440,26 @@ def main():
     make_struct_a_dict_wrapper(schema)
     apply_required_fields(schema)
 
-    raw = json.dumps(schema)
-    remaining = re.findall(r'"[^"]*\.jsonschema\.json"', raw)
+    remaining = re.findall(r'"[^"]*\.jsonschema\.json"', json.dumps(schema))
     if remaining:
-        print(f"WARNING: {len(remaining)} unresolved refs: {remaining[:5]}", file=sys.stderr)
+        raise SystemExit(
+            f"resolve_refs: {len(remaining)} unresolved external refs remain "
+            f"after the pipeline. First 5: {remaining[:5]}. Either upstream "
+            "added a new definition name we don't know how to rewrite, or "
+            "build_ref_map is missing a prefix."
+        )
 
+
+def main():
+    if len(sys.argv) < 2:
+        print(f"Usage: {sys.argv[0]} <schema.json> [output.json]")
+        sys.exit(1)
+
+    src = Path(sys.argv[1])
+    dst = Path(sys.argv[2]) if len(sys.argv) > 2 else src
+
+    schema = json.loads(src.read_text(encoding="utf-8"))
+    process_schema(schema)
     dst.write_text(json.dumps(schema, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Preprocessed schema -> {dst}")
 
