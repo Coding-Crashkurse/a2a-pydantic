@@ -273,8 +273,7 @@ def _agent_extension(e: v03.AgentExtension) -> v10.AgentExtension:
 def _agent_capabilities(c: v03.AgentCapabilities) -> v10.AgentCapabilities:
     if c.state_transition_history is not None:
         _warn(
-            "v03.AgentCapabilities.state_transition_history has no v1.0 "
-            "equivalent and was dropped"
+            "v03.AgentCapabilities.state_transition_history has no v1.0 equivalent and was dropped"
         )
     return v10.AgentCapabilities(
         extended_agent_card=None,
@@ -494,9 +493,7 @@ def _agent_card(c: v03.AgentCard) -> v10.AgentCard:
         provider=_agent_provider(c.provider) if c.provider is not None else None,
         security_requirements=security_requirements,
         security_schemes=security_schemes,
-        signatures=(
-            [_agent_card_signature(s) for s in c.signatures] if c.signatures else None
-        ),
+        signatures=([_agent_card_signature(s) for s in c.signatures] if c.signatures else None),
         skills=[_agent_skill(s) for s in c.skills],
         supported_interfaces=supported,
         version=c.version,

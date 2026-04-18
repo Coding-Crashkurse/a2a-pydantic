@@ -236,9 +236,7 @@ class TestAgentCard:
 
 class TestSecurityScheme:
     def test_api_key_roundtrips(self) -> None:
-        s = v03.SecurityScheme(
-            root=v03.APIKeySecurityScheme(in_=v03.In.header, name="X-Key")
-        )
+        s = v03.SecurityScheme(root=v03.APIKeySecurityScheme(in_=v03.In.header, name="X-Key"))
         out = convert_to_v10(s)
         assert out.api_key_security_scheme is not None
         assert out.api_key_security_scheme.location == "header"
