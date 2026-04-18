@@ -1,10 +1,13 @@
 # a2a-pydantic
 
 Pydantic models for the [A2A protocol](https://a2a-protocol.org/), covering
-both **v0.3** and **v1.0** in a single package, plus two typed bridges:
+both **v0.3** and **v1.0** in a single package, plus typed bridges in
+every direction:
 
 - a **v1.0 → v0.3 downward converter** so a v1.0 server can still speak
   to v0.3 clients
+- a **v0.3 → v1.0 upward converter** so a v1.0 internal pipeline can
+  ingest v0.3 wire input
 - a **v1.0 ↔ a2a-sdk protobuf bridge** so you can put typed Pydantic
   request and response models in front of the SDK's
   `DefaultRequestHandler` and get a real FastAPI `/docs` page with full
@@ -220,6 +223,129 @@ warning would otherwise fire once per SSE event:
 out = convert_to_v03(event, assume_final=is_terminal)
 # out.final == is_terminal, no "defaulting final=False" warning
 ```
+
+## Upgrading v0.3 → v1.0
+
+`convert_to_v10` is the upward counterpart to `convert_to_v03`. Same
+`@singledispatch + @overload` architecture. Fields that v1.0 introduces
+(`tenant`, `protocol_binding` vs `protocol_version` split, AwareDatetime
+timestamps, `pkce_required`, ...) default to `None` / `[]` / `""` unless
+you supply a context kwarg:
+
+```python
+import warnings
+from a2a_pydantic import convert_to_v10, v03
+
+params = v03.MessageSendParams(
+    message=v03.Message(
+        message_id="m-1",
+        role=v03.Role.user,
+        parts=[v03.Part(root=v03.TextPart(text="hi"))],
+    ),
+)
+
+with warnings.catch_warnings(record=True) as captured:
+    warnings.simplefilter("always")
+    req = convert_to_v10(
+        params,
+        tenant="acme-corp",                    # fills v10.SendMessageRequest.tenant
+        message_extensions=["urn:ext:foo"],    # fills v10.Message.extensions
+    )
+# req: v10.SendMessageRequest
+```
+
+The two context kwargs propagate through nested conversions via a
+`ContextVar`, so you only set them at the top-level call:
+
+| Kwarg | Fills |
+|---|---|
+| `tenant` | `v10.SendMessageRequest.tenant`, `v10.AgentInterface.tenant`, `v10.TaskPushNotificationConfig.tenant` |
+| `message_extensions` | `v10.Message.extensions` (overrides `v03.Message.extensions` when passed) |
+
+Every lossy step emits a `UserWarning`. Typical cases:
+
+- `v03.TaskState.unknown` — no v1.0 equivalent, coerced to
+  `task_state_submitted`
+- `PushNotificationAuthenticationInfo.schemes` with more than one
+  entry — v1.0's `AuthenticationInfo.scheme` is a single string, first
+  kept
+- `v03.OAuthFlows` with multiple flows — v1.0 enforces exactly one-of,
+  first kept
+- `AgentCapabilities.state_transition_history` — dropped (no v1.0
+  counterpart)
+
+### What's covered
+
+| v0.3 | v1.0 | Notes |
+|---|---|---|
+| `Role`, `TaskState` enums | same names | lowercase → protobuf `ROLE_*` / `TASK_STATE_*` |
+| `Part` (RootModel union) | `Part` (flat) | `TextPart`/`FilePart`/`DataPart` folded into `text`/`raw`/`url`/`data` |
+| `Message`, `Artifact`, `TaskStatus`, `Task` | same names | metadata dicts wrap into `Struct`, ISO timestamps parse into `Timestamp` |
+| `MessageSendConfiguration` | `SendMessageConfiguration` | `blocking` → `return_immediately` (inverted) |
+| `MessageSendParams` | `SendMessageRequest` | v0.3 has no JSON-RPC envelope layer on the params side |
+| `PushNotificationAuthenticationInfo` | `AuthenticationInfo` | `schemes: list[str]` → `scheme: str` (pick first) |
+| `PushNotificationConfig` | `TaskPushNotificationConfig` | flat synthesis with `task_id=""` when standalone |
+| `TaskPushNotificationConfig` | same name | nested → flat |
+| `AgentInterface` | same name | `transport` → `protocol_binding`, `protocol_version="0.3"` |
+| `AgentCard` | same name | `url`+`preferred_transport`+`additional_interfaces` → `supported_interfaces` list |
+| `AgentExtension/Capabilities/Skill/Provider/CardSignature` | same | `supports_authenticated_extended_card` → `capabilities.extended_agent_card` |
+| `SecurityScheme` (RootModel) | `SecurityScheme` (envelope) | one-of dispatch, five variants |
+| `APIKey/HTTPAuth/MutualTLS/OAuth2/OpenIdConnect` schemes | same | `In` enum → lowercase string |
+| `OAuthFlows` + all 4 flows | same | `pkce_required=False` injected on auth-code flow |
+
+## v10.Part construction / extraction helpers
+
+Building a `v10.Part` from scratch means either wrapping dicts in
+`v10.Value`, base64-encoding bytes, or remembering the flat-oneof shape.
+`a2a_pydantic.v10.parts` provides the obvious shortcuts so call sites
+read as natural Python:
+
+```python
+from a2a_pydantic.v10.parts import (
+    text_part, data_part, file_part_bytes, file_part_url,
+    extract_text, extract_data, extract_files, part_kind, FileInfo,
+)
+
+msg = v10.Message(
+    message_id="m-1",
+    role=v10.Role.role_user,
+    parts=[
+        text_part("Analyze this invoice."),
+        file_part_bytes(pdf_bytes, media_type="application/pdf", filename="inv.pdf"),
+        data_part({"currency": "EUR", "total": 42.0}),
+    ],
+)
+```
+
+Construction helpers handle the conversions automatically:
+
+| Helper | Does |
+|---|---|
+| `text_part(text, *, media_type=None, metadata=None)` | direct `Part(text=...)` |
+| `data_part(data, *, media_type="application/json", metadata=None)` | wraps `data` in `v10.Value` |
+| `file_part_bytes(content, *, media_type=None, filename=None, metadata=None)` | base64-encodes `content` into `Part.raw` |
+| `file_part_url(url, *, media_type=None, filename=None, metadata=None)` | direct `Part(url=...)` |
+
+Extractors go the other way, including base64-decoding and empty-string
+normalization:
+
+```python
+# Agent-side inbox processing
+if part_kind(msg.parts[0]) == "text":
+    text = extract_text(msg.parts)         # concatenated strings
+    blobs = extract_data(msg.parts)        # unwrapped from Value
+    files = extract_files(msg.parts)       # list[FileInfo]
+
+for f in files:
+    if f.content is not None:
+        save(f.content, name=f.filename)   # filename is None, not ""
+    elif f.url is not None:
+        download(f.url)
+```
+
+`FileInfo` is a frozen dataclass `(content, url, filename, media_type)`
+with the empty-string proto3 defaults flipped back to `None`, so the
+natural `if f.filename:` idiom works.
 
 ### What's covered
 
@@ -526,12 +652,14 @@ Stop one before starting the other — they share the port. Visit
 src/a2a_pydantic/
 ├── base.py              # A2ABaseModel: shared config + camelCase aliases
 ├── converters.py        # v1.0 -> v0.3 converter (SDK-free)
+├── converters_v10.py    # v0.3 -> v1.0 converter (SDK-free)
 ├── to_proto.py          # v1.0 -> a2a-sdk pb2 bridge (requires [proto] extra)
 ├── from_proto.py        # a2a-sdk pb2 -> v1.0 bridge (requires [proto] extra)
 ├── v03/
 │   └── models.py        # v0.3 models (A2A JSON Schema)
 └── v10/
-    └── models.py        # v1.0 models (A2A JSON Schema, extracted from .proto)
+    ├── models.py        # v1.0 models (A2A JSON Schema, extracted from .proto)
+    └── parts.py         # v10.Part construction / extraction helpers
 ```
 
 v10 models are regenerated via `scripts/generate_v10.ps1`, which pulls the

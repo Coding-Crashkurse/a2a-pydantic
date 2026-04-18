@@ -2,11 +2,13 @@ from typing import TYPE_CHECKING, Any
 
 from a2a_pydantic import v03, v10
 from a2a_pydantic.converters import convert_to_v03
+from a2a_pydantic.converters_v10 import convert_to_v10
 
 __all__ = [
     "v03",
     "v10",
     "convert_to_v03",
+    "convert_to_v10",
     "convert_to_proto",
     "convert_from_proto",
 ]
